@@ -1,0 +1,5 @@
+payload_bytes,key_bytes_consumed,key_per_plaintext_ratio
+64,80,1.25
+256,272,1.0625
+1024,1040,1.015625
+4096,4112,1.00390625

@@ -1,0 +1,28 @@
+# Virtual environments
+.venv/
+.venv-linux/
+.venv-*/
+venv/
+env/
+
+# Python caches
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Build / distribution
+build/
+dist/
+*.egg
+
+# Editor / OS
+.idea/
+.vscode/
+.DS_Store
+*.swp
+
+# Bench raw outputs are kept; intermediate junk is not
+docs/benchmarks/raw/summary.json

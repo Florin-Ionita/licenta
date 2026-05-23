@@ -1,0 +1,207 @@
+"""Plotly -> PDF rendering for the Phase 9 evaluation chapter.
+
+One function per artefact. Every plot uses the same dark template the
+dashboard does, so the thesis chapter has a uniform visual language. We
+require ``kaleido`` for PDF export -- if missing, we fall back to PNG so the
+suite still completes.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+
+from benchmarks.common import PLOT_DIR
+
+_TEMPLATE = "plotly_dark"
+
+
+def _save(fig: go.Figure, name: str) -> Path:
+    pdf = PLOT_DIR / f"{name}.pdf"
+    try:
+        fig.write_image(pdf, format="pdf", width=900, height=520)
+    except Exception:
+        pdf = PLOT_DIR / f"{name}.png"
+        fig.write_image(pdf, format="png", width=900, height=520)
+    return pdf
+
+
+def latency_histogram(stats: dict) -> Path:
+    """Stacked subplots with independent *linear* x-axes per protocol.
+
+    QTLS (~15 ms) and TLS 1.3 (~1.5 ms) live on different scales; cramming
+    both into one linear axis crushes TLS into a single bar, while a shared
+    log axis distorts the QTLS distribution shape. Separate panels at full
+    linear resolution show each distribution honestly. Per-axis ranges are
+    clipped to the 99.5th percentile so a single outlier doesn't stretch the
+    plot and bury the modal shape.
+    """
+    q_ms = sorted(x / 1e6 for x in stats["qtls_samples_ns"])
+    t_ms = sorted(x / 1e6 for x in stats["tls13_samples_ns"])
+    q_max = q_ms[min(len(q_ms) - 1, int(len(q_ms) * 0.995))]
+    t_max = t_ms[min(len(t_ms) - 1, int(len(t_ms) * 0.995))]
+    fig = make_subplots(rows=2, cols=1, shared_xaxes=False,
+                        subplot_titles=("QTLS (over QKD)",
+                                        "TLS 1.3 (X25519 + AES-GCM)"),
+                        vertical_spacing=0.2)
+    fig.add_trace(go.Histogram(x=q_ms, name="QTLS",
+                               marker_color="#1f77b4", nbinsx=60),
+                  row=1, col=1)
+    fig.add_trace(go.Histogram(x=t_ms, name="TLS 1.3",
+                               marker_color="#ff7f0e", nbinsx=60),
+                  row=2, col=1)
+    fig.update_xaxes(title_text="ms per handshake",
+                     range=[0, q_max * 1.05], row=1, col=1)
+    fig.update_xaxes(title_text="ms per handshake",
+                     range=[0, t_max * 1.05], row=2, col=1)
+    fig.update_yaxes(title_text="count", row=1, col=1)
+    fig.update_yaxes(title_text="count", row=2, col=1)
+    fig.update_layout(template=_TEMPLATE, showlegend=False,
+                      title="Handshake latency distribution "
+                            "(independent x-axes; 99.5th percentile clipped)",
+                      height=720)
+    return _save(fig, "01_handshake_latency_histogram")
+
+
+def latency_summary_table(stats: dict) -> Path:
+    rows = [["protocol", "n", "mean (ms)", "stdev", "median",
+             "p95", "p99", "min", "max"]]
+    for proto in ("qtls", "tls13"):
+        s = stats[proto]
+        rows.append([proto, s["n"], f"{s['mean_ms']:.3f}", f"{s['stdev_ms']:.3f}",
+                     f"{s['median_ms']:.3f}", f"{s['p95_ms']:.3f}",
+                     f"{s['p99_ms']:.3f}", f"{s['min_ms']:.3f}",
+                     f"{s['max_ms']:.3f}"])
+    fig = go.Figure(data=[go.Table(
+        header=dict(values=rows[0], fill_color="#222", font=dict(color="white")),
+        cells=dict(values=list(zip(*rows[1:])),
+                   fill_color="#0e1117", font=dict(color="white")),
+    )])
+    fig.update_layout(template=_TEMPLATE, title="Handshake latency summary")
+    return _save(fig, "02_handshake_latency_table")
+
+
+def throughput_bars(summary: dict) -> Path:
+    """Two-panel split: each protocol on its own linear y-axis.
+
+    QTLS (~0.2 MB/s, OTP-bound by KME bandwidth) and TLS 1.3 (~120-180 MB/s,
+    AES-GCM-bound) live three decades apart. Plotting them on a shared linear
+    axis hides QTLS entirely; a shared log axis distorts both. Stacked
+    panels with independent y-axes show each at full resolution while still
+    being read side-by-side. Each bar is annotated with its numeric value so
+    the absolute gap is unmistakable.
+    """
+    def _xs(rows):
+        return [f"{r['bytes'] // (1<<20)} MB" if r['bytes'] >= 1<<20
+                else f"{r['bytes'] // 1024} KiB"
+                for r in rows]
+
+    fig = make_subplots(rows=2, cols=1, shared_xaxes=True,
+                        subplot_titles=("QTLS (over QKD)",
+                                        "TLS 1.3 (X25519 + AES-GCM)"),
+                        vertical_spacing=0.18)
+    q_ys = [s["mbps"] for s in summary["qtls"]]
+    t_ys = [s["mbps"] for s in summary["tls13"]]
+    fig.add_trace(go.Bar(x=_xs(summary["qtls"]), y=q_ys,
+                         marker_color="#1f77b4",
+                         text=[f"{y:.2f}" for y in q_ys],
+                         textposition="outside",
+                         hovertemplate="QTLS<br>%{x}: %{y:.3f} MB/s<extra></extra>",
+                         showlegend=False),
+                  row=1, col=1)
+    fig.add_trace(go.Bar(x=_xs(summary["tls13"]), y=t_ys,
+                         marker_color="#ff7f0e",
+                         text=[f"{y:.1f}" for y in t_ys],
+                         textposition="outside",
+                         hovertemplate="TLS 1.3<br>%{x}: %{y:.1f} MB/s<extra></extra>",
+                         showlegend=False),
+                  row=2, col=1)
+    fig.update_yaxes(title_text="MB / s", range=[0, max(q_ys) * 1.25 if q_ys else 1],
+                     row=1, col=1)
+    fig.update_yaxes(title_text="MB / s", range=[0, max(t_ys) * 1.15 if t_ys else 1],
+                     row=2, col=1)
+    fig.update_xaxes(title_text="payload size", row=2, col=1)
+    fig.update_layout(template=_TEMPLATE,
+                      title="Bulk throughput (independent y-axes)",
+                      height=620)
+    return _save(fig, "03_throughput_bars")
+
+
+def pool_drain_plot(result: dict) -> Path:
+    samples = result["samples"]
+    ts = [r[0] for r in samples]
+    fig = make_subplots(specs=[[{"secondary_y": True}]])
+    fig.add_trace(go.Scatter(x=ts, y=[r[1] for r in samples],
+                             mode="lines", name="KME-A fresh"),
+                  secondary_y=False)
+    fig.add_trace(go.Scatter(x=ts, y=[r[2] for r in samples],
+                             mode="lines", name="KME-B fresh"),
+                  secondary_y=False)
+    fig.add_trace(go.Scatter(x=ts, y=[r[5] / 1024 for r in samples],
+                             mode="lines", name="cumulative KiB sent",
+                             line=dict(dash="dot", color="#ff7f0e")),
+                  secondary_y=True)
+    fig.update_layout(template=_TEMPLATE,
+                      title="Pool depth under sustained QTLS chat load",
+                      xaxis_title="seconds")
+    fig.update_yaxes(title_text="fresh keys in pool", secondary_y=False)
+    fig.update_yaxes(title_text="cumulative payload KiB",   secondary_y=True)
+    return _save(fig, "04_pool_drain")
+
+
+def key_consumption_plot(result: dict) -> Path:
+    s = result["samples"]
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=[r["payload"] for r in s],
+                             y=[r["ratio"] for r in s],
+                             mode="lines+markers",
+                             name="key bytes / plaintext byte"))
+    fig.add_hline(y=1.0, line_dash="dash", line_color="#888",
+                  annotation_text="OTP lower bound (1.0)")
+    fig.update_layout(template=_TEMPLATE,
+                      title="Per-record key consumption ratio",
+                      xaxis_title="record payload (bytes, log)",
+                      xaxis_type="log",
+                      yaxis_title="key bytes consumed / plaintext byte")
+    return _save(fig, "05_key_consumption_ratio")
+
+
+def qber_sweep_plot(result: dict) -> Path:
+    """Theoretical secret-key rate (Shor-Preskill) with the empirical overlay.
+
+    The smooth curve is the asymptotic bound; the marker is what our pipeline
+    actually delivers at its 2% operating point. The vertical line at 11% is
+    the standard cutoff where the rate hits zero.
+    """
+    s = result["samples"]
+    theoretical = [r for r in s if r.get("theoretical_key_rate_Bps") is not None
+                   and r.get("measured_key_rate_Bps") is None]
+    measured = [r for r in s if r.get("measured_key_rate_Bps") is not None]
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=[r["qber"] * 100 for r in theoretical],
+        y=[r["theoretical_key_rate_Bps"] / 1024 for r in theoretical],
+        mode="lines", name="Shor-Preskill (theoretical)",
+        line=dict(color="#1f77b4", width=2),
+    ))
+    if measured:
+        measured = sorted(measured, key=lambda r: r["qber"])
+        fig.add_trace(go.Scatter(
+            x=[r["qber"] * 100 for r in measured],
+            y=[r["measured_key_rate_Bps"] / 1024 for r in measured],
+            mode="lines+markers", name="this implementation (measured)",
+            line=dict(color="#ff7f0e", width=2, dash="dot"),
+            marker=dict(color="#ff7f0e", size=12, symbol="diamond"),
+        ))
+    fig.add_vline(x=11, line_dash="dash", line_color="#d62728",
+                  annotation_text="Shor-Preskill abort (11%)")
+    fig.update_layout(template=_TEMPLATE,
+                      title="Secret-key rate vs QBER (asymptotic, "
+                            f"raw rate {(1 << 20) / 1e6:.1f} Mbps)",
+                      xaxis_title="QBER (%)",
+                      yaxis_title="secret-key rate (KiB / s)",
+                      legend=dict(orientation="h"))
+    return _save(fig, "06_qber_vs_rate")

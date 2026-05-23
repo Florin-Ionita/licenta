@@ -1,0 +1,162 @@
+Metadata-Version: 2.4
+Name: qtls-qkd
+Version: 0.1.0
+Summary: Information-theoretic secure protocol (TLS 1.3-shaped) over a simulated QKD network
+Requires-Python: >=3.12
+Description-Content-Type: text/markdown
+Requires-Dist: qiskit>=1.2
+Requires-Dist: qiskit-aer>=0.15
+Requires-Dist: numpy>=1.26
+Requires-Dist: fastapi>=0.115
+Requires-Dist: uvicorn>=0.30
+Requires-Dist: pydantic>=2.8
+Requires-Dist: httpx>=0.27
+Requires-Dist: cryptography>=43
+Provides-Extra: dev
+Requires-Dist: pytest>=8.0; extra == "dev"
+Requires-Dist: pytest-asyncio>=0.24; extra == "dev"
+Provides-Extra: viz
+Requires-Dist: streamlit>=1.31; extra == "viz"
+Requires-Dist: plotly>=5.20; extra == "viz"
+Requires-Dist: networkx>=3.2; extra == "viz"
+Requires-Dist: streamlit-autorefresh>=1.0; extra == "viz"
+Provides-Extra: bench
+Requires-Dist: pyperf>=2.6; extra == "bench"
+Requires-Dist: kaleido<1.0,>=0.2; extra == "bench"
+
+# qtls-qkd
+
+Information-theoretic-secure TLS 1.3-shaped protocol over a simulated QKD
+network. Bachelor's thesis implementation (Python 3.12, pure-Python stack,
+no native crypto libraries).
+
+The session key never comes from (EC)DHE -- it comes from a simulated QKD
+link via an ETSI GS QKD 014 KME. Application records are encrypted with a
+One-Time Pad and authenticated with a Wegman-Carter MAC over GF(2¹²⁸), so
+security is information-theoretic end-to-end (independent of computational
+assumptions, including post-quantum ones).
+
+See [`thesis_plan.md`](thesis_plan.md) for the full phased roadmap and
+[`docs/design_notes.md`](docs/design_notes.md) for the decision record.
+
+## Setup
+
+Python **3.12+** is required.
+
+```bash
+python3.12 -m venv .venv-linux
+source .venv-linux/bin/activate
+pip install -e ".[dev,viz,bench]"
+```
+
+On Windows (PowerShell):
+
+```powershell
+py -3.12 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -e ".[dev,viz,bench]"
+```
+
+### Optional extras
+
+- `.[dev]` -- pytest, pytest-asyncio (run the test suite)
+- `.[viz]` -- streamlit, plotly, networkx, streamlit-autorefresh (Phase 7 dashboard)
+- `.[bench]` -- pyperf, kaleido (Phase 9 evaluation suite)
+
+## Running the test suite
+
+```bash
+pytest                                  # all phases
+pytest tests/test_phase5_qtls.py -v     # one phase
+```
+
+All 52+ tests run in ~15 s on a laptop.
+
+## Running the live demo (Phase 7)
+
+```bash
+streamlit run viz/main.py
+```
+
+Opens a four-panel dashboard at <http://localhost:8501>:
+
+| Panel | What it shows |
+|-------|---------------|
+| A     | QKD network topology with pool depth and key-rate-per-link |
+| B     | BB84 photon stream with polarisation glyphs and sifting |
+| C     | QTLS handshake sequence (ClientHello → ServerHello → Finished) |
+| D     | Live metrics: handshake latency, key throughput, pool depth |
+
+Sidebar controls:
+
+- **Mode** -- switch between point-to-point and multi-hop relay (Phase 8)
+- **Refresh interval** -- 250 ms (live) to 5 s (calm)
+- **Pause snapshot** -- freeze the dashboard on the current frame
+- **BB84 per-round delay** -- slow the quantum producer to a readable cadence
+
+Header: Start/Stop the runtime, toggle the **Eve attack** to drive QBER
+above the 11% Shor-Preskill threshold (BB84 aborts visibly).
+
+## Running the chat demo (Phase 6, CLI)
+
+```bash
+python -m app.demo_chat
+```
+
+Two terminals exchange messages over a real QTLS connection; the second pane
+streams handshake-latency and pool-depth telemetry.
+
+## Running the benchmark suite (Phase 9)
+
+```bash
+python -m benchmarks.runner --profile lite      # ~1-2 min
+python -m benchmarks.runner --profile full      # ~15-25 min (thesis figures)
+python -m benchmarks.runner --profile extreme   # ~45-60 min (paper-grade)
+
+python -m benchmarks.runner --only handshake throughput   # subset
+python -m benchmarks.replot                               # rerun plots only
+```
+
+Outputs:
+
+- Raw CSVs → `docs/benchmarks/raw/`
+- PDF plots → `docs/benchmarks/plots/`
+
+What each plot shows:
+
+1. **Handshake latency** -- distributions of QTLS vs TLS 1.3 (X25519+AES-GCM)
+2. **Latency summary table** -- mean / median / p95 / p99 / min / max
+3. **Throughput bars** -- MB/s per payload size, split-panel (independent y-axes)
+4. **Pool drain** -- key-pool depth under sustained chat load
+5. **Key consumption ratio** -- key-bits-per-plaintext-byte vs record size
+6. **QBER vs key rate** -- Shor-Preskill theoretical curve with measured points
+
+## Repository layout
+
+```
+qkd/        BB84 quantum simulation, abstract bulk producer, reconciliation,
+            privacy amplification, relay network (Phase 8)
+kme/        ETSI GS QKD 014 KME server (FastAPI), key store, mTLS certs,
+            two-KME synchronisation
+qtls/       QTLS handshake state machine, key schedule (RFC 8446-shaped),
+            record layer, OTP + Wegman-Carter primitives, KME client
+app/        Single-process demo orchestrator and CLI chat app
+viz/        Streamlit dashboard, event bus, asyncio runtime, panel builders
+benchmarks/ Phase 9 evaluation: per-bench module + shared harness + plotters
+tests/      One pytest file per phase (1-9, phase-numbered)
+docs/       Design notes (prose, thesis-ready), benchmark CSVs and PDFs
+```
+
+## Thesis defence quick-fire
+
+- *Why OTP and not AES-GCM?* Shannon-secure given uniform, fresh, equal-length
+  key -- our KME enforces all three. AES-GCM is only computationally secure.
+- *Why Wegman-Carter and not HMAC?* WC's security is information-theoretic
+  (matches OTP); HMAC's is computational.
+- *Why 11% QBER abort?* Shor-Preskill asymptotic bound; above it no privacy
+  amplification can extract a positive secret-key rate.
+- *Why no ML-KEM?* PQC is the answer when QKD infrastructure is absent. This
+  thesis explores the case when you *have* QKD: OTP+WC is strictly stronger.
+- *Implementation gap to theoretical rate?* Cascade-lite over-leaks vs optimal
+  Cascade and we use SHAKE-128 with byte rounding for privacy amplification.
+  Real deployments use LDPC and tighter extractors; listed under Future Work.

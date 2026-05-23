@@ -1,0 +1,21 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(kill 25818 25820 61859 61861)",
+      "Bash(kill 66677)",
+      "Bash(.venv-linux/bin/python -c ' *)",
+      "Bash(.venv-linux/bin/python -c *)",
+      "Bash(kill 81634 81636)",
+      "Bash(tee /tmp/bench-lite.log)",
+      "Bash(.venv-linux/bin/python -m benchmarks.runner --profile lite --only key_consumption)",
+      "Bash(.venv-linux/bin/python -m json.tool)",
+      "Bash(.venv-linux/bin/python -m benchmarks.runner --profile lite > /tmp/bench-lite2.log 2>&1; echo \"exit=$?\"; cat /tmp/bench-lite2.log | tail -50)",
+      "Bash(.venv-linux/bin/python -m benchmarks.runner --profile lite --only pool_drain)",
+      "Bash(.venv-linux/bin/python -m benchmarks.replot --only handshake throughput)",
+      "Bash(.venv-linux/bin/python -m benchmarks.runner --profile lite --only qber_sweep)"
+    ],
+    "additionalDirectories": [
+      "/tmp"
+    ]
+  }
+}
