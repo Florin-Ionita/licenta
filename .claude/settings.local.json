@@ -1,0 +1,38 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(py --version)",
+      "Bash(python -c \"import sys; print\\(sys.executable\\)\")",
+      "Bash(pip --version)",
+      "Bash(where python *)",
+      "Read(//c//**)",
+      "Read(//c/Windows/**)",
+      "Bash(winget --version)",
+      "Bash(choco --version)",
+      "PowerShell(winget install --id Python.Python.3.12 --source winget --accept-package-agreements --accept-source-agreements --silent)",
+      "PowerShell($py = \"$env:LOCALAPPDATA\\\\Programs\\\\Python\\\\Python312\\\\python.exe\"; if \\(Test-Path $py\\) { & $py --version; Write-Output $py } else { Write-Output \"not at expected path\"; Get-ChildItem \"$env:LOCALAPPDATA\\\\Programs\\\\Python\" -ErrorAction SilentlyContinue })",
+      "PowerShell($py = \"C:\\\\Users\\\\Admin\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python312\\\\python.exe\"; & $py -m venv C:\\\\licenta\\\\licenta\\\\.venv; & C:\\\\licenta\\\\licenta\\\\.venv\\\\Scripts\\\\python.exe --version; & C:\\\\licenta\\\\licenta\\\\.venv\\\\Scripts\\\\python.exe -m pip install --upgrade pip --quiet; Write-Output \"venv ready\")",
+      "PowerShell(& C:\\\\licenta\\\\licenta\\\\.venv\\\\Scripts\\\\python.exe -m pip install \"qiskit>=1.2\" \"qiskit-aer>=0.15\" \"pytest>=8.0\" \"numpy>=1.26\" --quiet 2>&1)",
+      "PowerShell(& C:\\\\licenta\\\\licenta\\\\.venv\\\\Scripts\\\\python.exe -c \"import qiskit, qiskit_aer; print\\('qiskit', qiskit.__version__\\); print\\('qiskit-aer', qiskit_aer.__version__\\)\")",
+      "PowerShell(& C:\\\\licenta\\\\licenta\\\\.venv\\\\Scripts\\\\python.exe -m pytest C:\\\\licenta\\\\licenta\\\\tests\\\\test_phase1_bb84.py -v --tb=short 2>&1)",
+      "PowerShell(1..3 | ForEach-Object { Write-Output \"=== run $_ ===\"; & C:\\\\licenta\\\\licenta\\\\.venv\\\\Scripts\\\\python.exe -m pytest C:\\\\licenta\\\\licenta\\\\tests\\\\test_phase1_bb84.py -q --tb=line 2>&1 | Select-Object -Last 2 })",
+      "PowerShell(& C:\\\\licenta\\\\licenta\\\\.venv\\\\Scripts\\\\python.exe -m pip install \"pytest-asyncio>=0.24\" --quiet 2>&1)",
+      "PowerShell(& C:\\\\licenta\\\\licenta\\\\.venv\\\\Scripts\\\\python.exe -c \"import pytest_asyncio; print\\('pytest-asyncio', pytest_asyncio.__version__\\)\")",
+      "PowerShell(& C:\\\\licenta\\\\licenta\\\\.venv\\\\Scripts\\\\python.exe -m pytest C:\\\\licenta\\\\licenta\\\\tests -v --tb=short 2>&1)",
+      "PowerShell(& C:\\\\licenta\\\\licenta\\\\.venv\\\\Scripts\\\\python.exe -m pip install \"fastapi>=0.115\" \"uvicorn>=0.30\" \"pydantic>=2.8\" \"httpx>=0.27\" \"cryptography>=43\" --quiet 2>&1)",
+      "PowerShell(& C:\\\\licenta\\\\licenta\\\\.venv\\\\Scripts\\\\python.exe -c \"import fastapi, pydantic, httpx, cryptography, uvicorn; print\\('fastapi', fastapi.__version__\\); print\\('pydantic', pydantic.__version__\\); print\\('httpx', httpx.__version__\\); print\\('cryptography', cryptography.__version__\\)\")",
+      "PowerShell(& C:\\\\licenta\\\\licenta\\\\.venv\\\\Scripts\\\\python.exe -m pytest C:\\\\licenta\\\\licenta\\\\tests\\\\test_phase3_kme.py -v --tb=short 2>&1)",
+      "PowerShell(& C:\\\\licenta\\\\licenta\\\\.venv\\\\Scripts\\\\python.exe -m pytest C:\\\\licenta\\\\licenta\\\\tests -q --tb=short 2>&1)",
+      "PowerShell(& C:\\\\licenta\\\\licenta\\\\.venv\\\\Scripts\\\\python.exe -m pytest C:\\\\licenta\\\\licenta\\\\tests\\\\test_phase5_qtls.py -v --tb=short 2>&1)",
+      "Bash(timeout 60 .venv/Scripts/python.exe -m pytest tests/test_phase5_qtls.py -v --tb=short -x)",
+      "Bash(timeout 90 .venv/Scripts/python.exe -m pytest tests/test_phase5_qtls.py -v --tb=short)",
+      "Bash(timeout 120 .venv/Scripts/python.exe -m pytest tests -q --tb=short)",
+      "Bash(timeout 120 .venv/Scripts/python.exe -m pytest tests/test_phase6_demo.py -v --tb=short)",
+      "Bash(timeout 40 .venv/Scripts/python.exe -m pytest \"tests/test_phase6_demo.py::test_live_chat_exchange\" -v --tb=long)",
+      "Bash(timeout 60 .venv/Scripts/python.exe -c ' *)",
+      "Bash(timeout 50 .venv/Scripts/python.exe -m pytest \"tests/test_phase6_demo.py::test_live_chat_exchange\" -v --tb=short)",
+      "Bash(timeout 80 .venv/Scripts/python.exe -m pytest \"tests/test_phase6_demo.py::test_file_transfer_drains_the_key_pool\" \"tests/test_phase6_demo.py::test_file_transfer_completes_when_pool_is_large_enough\" -v --tb=short)",
+      "Bash(timeout 90 .venv/Scripts/python.exe -m pytest tests/test_phase6_demo.py -v --tb=short)"
+    ]
+  }
+}
