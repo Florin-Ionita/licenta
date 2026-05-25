@@ -108,19 +108,26 @@ def _load_qber_sweep() -> dict | None:
     rows = _read_csv("qber_sweep")
     if not rows:
         return None
-    samples = []
+    # The CSV records three series: theoretical (Shor-Preskill), cascade
+    # (Shannon + 15% leak), and measured. The plot expects each sample row
+    # to potentially carry both "theoretical" and "cascade" keys, so we
+    # merge rows that share the same QBER.
+    merged: dict[float, dict] = {}
     for r in rows:
-        series = r.get("series", "theoretical")
+        q = float(r["qber"])
         rate = float(r["secret_key_rate_Bps"])
+        slot = merged.setdefault(q, {"qber": q,
+                                      "theoretical_key_rate_Bps": None,
+                                      "cascade_key_rate_Bps": None,
+                                      "measured_key_rate_Bps": None})
+        series = r.get("series", "theoretical")
         if series == "theoretical":
-            samples.append({"qber": float(r["qber"]),
-                            "theoretical_key_rate_Bps": rate,
-                            "measured_key_rate_Bps": None})
+            slot["theoretical_key_rate_Bps"] = rate
+        elif series == "cascade":
+            slot["cascade_key_rate_Bps"] = rate
         else:
-            samples.append({"qber": float(r["qber"]),
-                            "theoretical_key_rate_Bps": None,
-                            "measured_key_rate_Bps": rate})
-    return {"samples": samples}
+            slot["measured_key_rate_Bps"] = rate
+    return {"samples": list(merged.values())}
 
 
 LOADERS = {

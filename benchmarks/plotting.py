@@ -169,11 +169,18 @@ def key_consumption_plot(result: dict) -> Path:
 
 
 def qber_sweep_plot(result: dict) -> Path:
-    """Theoretical secret-key rate (Shor-Preskill) with the empirical overlay.
+    """Secret-key rate vs QBER: three curves so the comparison is honest.
 
-    The smooth curve is the asymptotic bound; the marker is what our pipeline
-    actually delivers at its 2% operating point. The vertical line at 11% is
-    the standard cutoff where the rate hits zero.
+      * Blue (solid)  -- Shor-Preskill physics ceiling: any *optimal* protocol's
+                         maximum. Assumes Shannon-optimal reconciliation.
+      * Green (dashed) -- realistic Cascade: ceiling minus the well-documented
+                         ~15% Cascade leakage overhead. This is what a textbook
+                         Cascade implementation should plausibly achieve.
+      * Orange (diamonds) -- this implementation's measured throughput.
+
+    The thesis-relevant gap is "orange vs green" -- both run Cascade and
+    should be close. "Blue vs green" is the structural Cascade penalty,
+    closed only by LDPC reconciliation (Future Work).
     """
     s = result["samples"]
     theoretical = [r for r in s if r.get("theoretical_key_rate_Bps") is not None
@@ -184,9 +191,17 @@ def qber_sweep_plot(result: dict) -> Path:
     fig.add_trace(go.Scatter(
         x=[r["qber"] * 100 for r in theoretical],
         y=[r["theoretical_key_rate_Bps"] / 1024 for r in theoretical],
-        mode="lines", name="Shor-Preskill (theoretical)",
+        mode="lines", name="Shor-Preskill bound (physics ceiling)",
         line=dict(color="#1f77b4", width=2),
     ))
+    cascade = [r for r in theoretical if r.get("cascade_key_rate_Bps") is not None]
+    if cascade:
+        fig.add_trace(go.Scatter(
+            x=[r["qber"] * 100 for r in cascade],
+            y=[r["cascade_key_rate_Bps"] / 1024 for r in cascade],
+            mode="lines", name="realistic Cascade (Shannon + 15% leak)",
+            line=dict(color="#2ca02c", width=2, dash="dash"),
+        ))
     if measured:
         measured = sorted(measured, key=lambda r: r["qber"])
         fig.add_trace(go.Scatter(

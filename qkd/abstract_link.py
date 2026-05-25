@@ -119,7 +119,17 @@ async def abstract_qkd_link(
     while stop_event is None or not stop_event.is_set():
         await asyncio.sleep(1.0)
         try:
-            block = generate_block(effective_bits, qber, qber_abort=qber_abort)
+            # Cascade reconciliation is CPU-bound and (for large blocks)
+            # takes hundreds of milliseconds. Run it in a worker thread so
+            # the asyncio event loop stays responsive: handshakes, KME REST
+            # calls, and the dashboard can all keep ticking while one block
+            # distils. Without this offload the producer's per-iteration
+            # sleep(1.0) silently stretches to sleep(1.0) + cascade_time,
+            # making the apparent key rate up to several times lower than
+            # the physical channel would yield.
+            block = await asyncio.to_thread(
+                generate_block, effective_bits, qber, qber_abort,
+            )
         except QBERTooHighError:
             # Unusable second (QBER above the security gate): skip and retry,
             # exactly as a real deployment would discard the frame.

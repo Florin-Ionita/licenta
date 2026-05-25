@@ -37,6 +37,19 @@ pip install -e ".[dev,viz,bench]"
 - `.[viz]` -- streamlit, plotly, networkx, streamlit-autorefresh (Phase 7 dashboard)
 - `.[bench]` -- pyperf, kaleido (Phase 9 evaluation suite)
 
+### Native C Cascade (optional, automatic)
+
+The full Cascade reconciliation (with back-propagation) is implemented in C
+in [`qkd/_cascade.c`](qkd/_cascade.c). On first import the ctypes loader in
+[`qkd/_cascade.py`](qkd/_cascade.py) compiles it to a shared library using
+the system C compiler (``cc`` / ``clang`` / ``gcc`` on POSIX, ``cl`` /
+``gcc`` on Windows) and loads it. If no compiler is available the loader
+falls back to a pure-Python implementation with a one-line warning; the
+project keeps working, just ~100x slower on the reconciliation step.
+
+To force a rebuild, delete ``qkd/libcascade.so`` (or ``.dll``) and re-run
+any Python command that imports ``qkd.reconciliation``.
+
 ## Running the test suite
 
 ```bash

@@ -18,6 +18,11 @@ build/
 dist/
 *.egg
 
+# Compiled C extensions (rebuilt on first import by qkd/_cascade.py)
+*.so
+*.dll
+*.dylib
+
 # Editor / OS
 .idea/
 .vscode/

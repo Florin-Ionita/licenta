@@ -12,7 +12,19 @@
       "Bash(.venv-linux/bin/python -m benchmarks.runner --profile lite > /tmp/bench-lite2.log 2>&1; echo \"exit=$?\"; cat /tmp/bench-lite2.log | tail -50)",
       "Bash(.venv-linux/bin/python -m benchmarks.runner --profile lite --only pool_drain)",
       "Bash(.venv-linux/bin/python -m benchmarks.replot --only handshake throughput)",
-      "Bash(.venv-linux/bin/python -m benchmarks.runner --profile lite --only qber_sweep)"
+      "Bash(.venv-linux/bin/python -m benchmarks.runner --profile lite --only qber_sweep)",
+      "Bash(git rm *)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git push *)",
+      "Bash(kill 21449)",
+      "Bash(timeout 60 .venv-linux/bin/python -m pytest tests/test_phase1_bb84.py -v --tb=short)",
+      "Bash(timeout 20 .venv-linux/bin/python -m pytest tests/test_phase1_bb84.py -v --tb=short --timeout=15)",
+      "Bash(timeout 120 .venv-linux/bin/python -m pytest tests/test_phase1_bb84.py -v --tb=short)",
+      "Bash(kill 34575)",
+      "Bash(kill 36101 36103)",
+      "Bash(kill 38574)",
+      "Bash(.venv-linux/bin/python -m benchmarks.replot --only qber_sweep)"
     ],
     "additionalDirectories": [
       "/tmp"
