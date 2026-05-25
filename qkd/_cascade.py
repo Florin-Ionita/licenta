@@ -3,17 +3,19 @@
 On import this module ensures a compiled shared library ``_cascade.so``
 (or ``.dll`` on Windows) sits next to ``_cascade.c`` and is at least as
 recent as the source. If the library is missing or stale we invoke the
-system C compiler to (re)build it; if that fails we fall back to the pure-
-Python ``_cascade_python`` implementation so the rest of the project keeps
-working (with a one-time warning printed to stderr).
+system C compiler to (re)build it; if that fails the import raises
+:class:`ImportError`. The project deliberately has no Python fallback --
+benchmarks and the Phase 6/8 tests rely on the C speed to stay inside
+their timeouts, and using a single backend across the whole project
+keeps results reproducible.
 
 The wrapper exposes a single function::
 
     cascade_reconcile(alice: list[int], bob: list[int], qber: float,
                       passes: int = 4) -> tuple[int, int]
 
-with the same semantics as the pure-Python version: Bob's list is mutated
-in place, the return tuple is ``(errors_corrected, parity_bits_leaked)``.
+Bob's list is mutated in place; the return tuple is
+``(errors_corrected, parity_bits_leaked)``.
 """
 
 from __future__ import annotations
@@ -23,8 +25,6 @@ import os
 import secrets
 import shutil
 import subprocess
-import sys
-import warnings
 from pathlib import Path
 
 import numpy as np
@@ -113,28 +113,19 @@ def _load() -> ctypes.CDLL:
     return lib
 
 
-# --- module init: try to load C; remember failure for the Python fallback ---
+# --- module init: load the C library or fail loudly --------------------
 
 try:
     _LIB_HANDLE = _load()
-    _C_AVAILABLE = True
-except Exception as exc:  # broad on purpose -- any failure -> fallback
-    _LIB_HANDLE = None
-    _C_AVAILABLE = False
-    warnings.warn(
-        f"qkd._cascade: C extension unavailable ({exc}); falling back to "
-        f"slower pure-Python Cascade.",
-        RuntimeWarning,
-        stacklevel=2,
-    )
+except Exception as exc:
+    raise ImportError(
+        f"qkd._cascade: C extension unavailable ({exc}). "
+        f"Install a C compiler (MSYS2 gcc on Windows, cc/clang on POSIX) "
+        f"so qkd/_cascade.c can be built on first import."
+    ) from exc
 
 
 # --- public API -----------------------------------------------------------
-
-
-def is_c_available() -> bool:
-    """True if the C Cascade implementation loaded successfully."""
-    return _C_AVAILABLE
 
 
 def cascade_reconcile_c(alice: list[int], bob: list[int],
@@ -144,8 +135,6 @@ def cascade_reconcile_c(alice: list[int], bob: list[int],
     Returns ``(corrected, leaked)``. Raises :class:`RuntimeError` on a
     reconciliation failure (caller treats as a protocol abort).
     """
-    if not _C_AVAILABLE:
-        raise CCascadeUnavailable("C Cascade not loaded")
     if len(alice) != len(bob):
         raise ValueError("Alice and Bob keys must have equal length")
     n = len(alice)

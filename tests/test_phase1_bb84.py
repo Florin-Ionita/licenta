@@ -9,6 +9,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from qkd.bb84 import bb84_round, collect_sifted_key
@@ -112,6 +114,48 @@ def test_pipeline_aborts_above_high_noise():
     assert qber >= DEFAULT_QBER_ABORT
     with pytest.raises(QBERTooHighError):
         reconcile_and_amplify(alice, bob, qber)
+
+
+def test_render_bb84_circuit_figure():
+    """Run a real (small) BB84 round and draw its quantum circuit to a PDF/PNG.
+
+    This is not an acceptance test of the protocol -- the BB84 invariants are
+    covered above. It exists to regenerate the thesis figure showing what the
+    Qiskit circuit BB84 actually executes looks like. It is skipped if the
+    optional drawing dependencies are not installed.
+    """
+    matplotlib = pytest.importorskip("matplotlib")
+    pytest.importorskip("pylatexenc")
+    matplotlib.use("Agg")  # headless backend; never opens a window in CI
+
+    from qiskit import QuantumCircuit
+
+    # Small qubit count keeps the figure readable on a thesis page.
+    r = bb84_round(n_qubits=8)
+
+    # Rebuild the same circuit `_measure_in_bases` built inside the simulator
+    # so we can draw it. (The production code does not retain the circuit.)
+    n = r.n_qubits
+    qc = QuantumCircuit(n, n)
+    for i in range(n):
+        if r.alice_bits[i]:
+            qc.x(i)
+        if r.alice_bases[i]:
+            qc.h(i)
+    qc.barrier()
+    for i in range(n):
+        if r.bob_bases[i]:
+            qc.h(i)
+        qc.measure(i, i)
+
+    out_dir = Path(__file__).resolve().parent.parent / "docs" / "figures"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    fig = qc.draw(output="mpl", style="iqp")
+    fig.savefig(out_dir / "bb84_circuit_round.pdf", bbox_inches="tight")
+    fig.savefig(out_dir / "bb84_circuit_round.png", bbox_inches="tight", dpi=200)
+
+    assert (out_dir / "bb84_circuit_round.pdf").exists()
+    assert (out_dir / "bb84_circuit_round.png").exists()
 
 
 def test_abort_threshold_is_configurable():

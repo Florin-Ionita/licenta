@@ -20,6 +20,7 @@ kme/models.py
 kme/network.py
 kme/store.py
 qkd/__init__.py
+qkd/_cascade.py
 qkd/abstract_link.py
 qkd/bb84.py
 qkd/bb84_source.py

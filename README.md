@@ -7,8 +7,12 @@ no native crypto libraries).
 The session key never comes from (EC)DHE -- it comes from a simulated QKD
 link via an ETSI GS QKD 014 KME. Application records are encrypted with a
 One-Time Pad and authenticated with a Wegman-Carter MAC over GF(2¹²⁸), so
-security is information-theoretic end-to-end (independent of computational
-assumptions, including post-quantum ones).
+security is information-theoretic end-to-end -- with one acknowledged
+caveat: the privacy-amplification extractor is SHAKE-128 rather than a
+2-universal hash family, which keeps that single step under a random-oracle
+(computational) assumption. Replacing it with Toeplitz hashing would restore
+unconditional security throughout; see Future Work and the defense quick-fire
+below.
 
 See [`thesis_plan.md`](thesis_plan.md) for the full phased roadmap and
 [`docs/design_notes.md`](docs/design_notes.md) for the decision record.
@@ -37,15 +41,17 @@ pip install -e ".[dev,viz,bench]"
 - `.[viz]` -- streamlit, plotly, networkx, streamlit-autorefresh (Phase 7 dashboard)
 - `.[bench]` -- pyperf, kaleido (Phase 9 evaluation suite)
 
-### Native C Cascade (optional, automatic)
+### Native C Cascade (required)
 
 The full Cascade reconciliation (with back-propagation) is implemented in C
 in [`qkd/_cascade.c`](qkd/_cascade.c). On first import the ctypes loader in
 [`qkd/_cascade.py`](qkd/_cascade.py) compiles it to a shared library using
 the system C compiler (``cc`` / ``clang`` / ``gcc`` on POSIX, ``cl`` /
-``gcc`` on Windows) and loads it. If no compiler is available the loader
-falls back to a pure-Python implementation with a one-line warning; the
-project keeps working, just ~100x slower on the reconciliation step.
+``gcc`` on Windows) and loads it. **If no C compiler is available the
+import raises ``ImportError``** -- there is no Python fallback. The
+benchmarks and Phase 6/8 tests rely on the C speed to stay inside their
+timeouts, and using a single backend across the whole project keeps
+results reproducible.
 
 To force a rebuild, delete ``qkd/libcascade.so`` (or ``.dll``) and re-run
 any Python command that imports ``qkd.reconciliation``.
@@ -58,6 +64,18 @@ pytest tests/test_phase5_qtls.py -v     # one phase
 ```
 
 All 52+ tests run in ~15 s on a laptop.
+
+## Quantum-circuit figures
+
+Two BB84 circuit illustrations live under `docs/figures/`:
+
+- `bb84_circuit_demo.{pdf,png}` -- a hand-picked 4-qubit circuit covering all
+  four `(prep_basis, meas_basis)` combinations. Regenerate with
+  `python scripts/draw_bb84_circuit.py`.
+- `bb84_circuit_round.{pdf,png}` -- a real (random) 8-qubit BB84 round
+  rebuilt and drawn by `test_render_bb84_circuit_figure` in
+  `tests/test_phase1_bb84.py`. Regenerated on every test run (silently
+  skipped if `matplotlib` / `pylatexenc` are not installed).
 
 ## Running the live demo (Phase 7)
 
@@ -136,6 +154,20 @@ docs/       Design notes (prose, thesis-ready), benchmark CSVs and PDFs
 
 ## Thesis defence quick-fire
 
+- *Is the whole stack really information-theoretic?* Almost. Every step --
+  BB84 sifting, Cascade reconciliation (with exact leak counting), OTP
+  encryption, Wegman-Carter MAC -- is unconditionally secure. The one
+  exception is **privacy amplification**: the BBCM 1995 proof requires a
+  uniformly chosen function from a 2-universal hash family (Toeplitz hashing
+  or modular multiplication in GF(2^n)), and this implementation uses
+  SHAKE-128 instead -- a single deterministic hash, not a randomly drawn
+  family member. SHAKE-128 is *conjectured* to behave as a random oracle,
+  under which it is effectively a perfect extractor; that conjecture is a
+  computational assumption, not an information-theoretic one. Operationally
+  the gap is small (SHAKE has no known attack faster than brute force, and
+  post-extraction keys are large enough that brute force is infeasible). The
+  drop-in fix is Toeplitz hashing with a per-session public random seed;
+  listed under Future Work, and would not change the KME or QTLS layers.
 - *Why OTP and not AES-GCM?* Shannon-secure given uniform, fresh, equal-length
   key -- our KME enforces all three. AES-GCM is only computationally secure.
 - *Why Wegman-Carter and not HMAC?* WC's security is information-theoretic
@@ -144,6 +176,42 @@ docs/       Design notes (prose, thesis-ready), benchmark CSVs and PDFs
   amplification can extract a positive secret-key rate.
 - *Why no ML-KEM?* PQC is the answer when QKD infrastructure is absent. This
   thesis explores the case when you *have* QKD: OTP+WC is strictly stronger.
-- *Implementation gap to theoretical rate?* Cascade-lite over-leaks vs optimal
-  Cascade and we use SHAKE-128 with byte rounding for privacy amplification.
-  Real deployments use LDPC and tighter extractors; listed under Future Work.
+- *Implementation gap to theoretical rate?* The reconciliation step uses full
+  Cascade with back-propagation and exact leak counting (C-accelerated), so
+  we track the realistic Cascade curve within ~10-15% at every QBER. The
+  remaining gap to the Shor-Preskill physics ceiling is the well-known
+  structural overhead of Cascade vs LDPC reconciliation (~10-15 pp) plus the
+  byte-rounding step in privacy amplification. Real high-end deployments use
+  LDPC and tighter extractors; listed under Future Work.
+- *Why BB84 and not Ekert91 / MDI-QKD / twin-field / CV-QKD?* BB84 (in its
+  decoy-state form) is what every deployed commercial QKD system actually
+  ships -- ID Quantique, Toshiba, the Micius satellite ground links. It has
+  the cleanest published security proof (Shor-Preskill 2000) and the minimal
+  quantum substrate (single-photon source + basis-choice detectors). The
+  thesis contribution is the integration layer above the QKD substrate -- the
+  KME, OTP+WC record layer, and TLS-1.3-shaped handshake -- which is
+  orthogonal to the choice of underlying QKD protocol. Swapping in MDI-QKD
+  (detector-attack hardening), twin-field (long-distance), or CV-QKD (telecom
+  homodyne integration) would not change the KME interface or QTLS layers
+  above it; listed under Future Work.
+- *How does the protocol detect Eve?* Through the QBER, not a Bell test.
+  Eve cannot copy a qubit (no-cloning), so to read each bit she must measure
+  it -- which requires guessing a basis. She guesses wrong ~50% of the time,
+  and wrong-basis intercept-and-resend re-randomises Bob's outcome on those
+  sifted positions. The result is a characteristic ~25% QBER on the sifted
+  key, far above the channel's baseline. Alice and Bob compare a sample,
+  observe the spike, and abort. Bell-inequality-based detection (the Ekert91
+  / GHZ-Mermin route) is the conceptual alternative used by
+  entanglement-based protocols; it is equivalent in the asymptotic limit but
+  requires entangled-pair sources.
+- *Why does the simulator compute the true QBER instead of estimating it from
+  a public-subset announcement?* In a deployed system, Alice and Bob estimate
+  QBER by publicly comparing a random subset of sifted bits and discarding
+  them. Our simulator has god-mode access to both halves of the sifted key,
+  so it returns the population value directly -- a strictly better estimator
+  of the same quantity. The substitution is faithful for everything
+  downstream (the abort threshold, reconciliation, the security argument all
+  operate on the QBER *number*, not on how it was obtained). The only thing
+  not modelled is finite-sample uncertainty on the estimate, which in a real
+  system motivates a safety margin below the 11% threshold; listed under
+  Future Work.

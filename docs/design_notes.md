@@ -156,11 +156,16 @@ finite-key analysis and realistic detector models, explicitly out of scope and
 listed as Future Work); the single `noise` parameter is the agreed
 abstraction of all of them.
 
-### 3.5 Reconciliation: simplified Cascade
+### 3.5 Reconciliation: full Cascade with back-propagation (C-accelerated)
 
-**Decision.** Errors remaining after sifting are corrected with a *simplified
-Cascade* protocol, not with the toy alternative of "Alice simply announces
-which bit positions are wrong."
+**Decision.** Errors remaining after sifting are corrected with the full
+Brassard-Salvail 1994 *Cascade* protocol -- including back-propagation
+through prior passes and an exact tally of every parity bit announced --
+not with the toy alternative of "Alice simply announces which bit positions
+are wrong." The hot loop is implemented in C (`qkd/_cascade.c`) and loaded
+via ctypes on first import; the project requires a working C compiler and
+deliberately has no Python fallback. *(The earlier teaching-grade
+pure-Python Cascade-lite has been removed; see post-Phase-7 rewrite.)*
 
 **Why not the toy alternative.** Announcing error positions directly leaks an
 unacceptable amount of information about the key and bears no resemblance to
@@ -195,10 +200,20 @@ even number of errors in a block; Cascade solves this by reshuffling the bit
 order between passes, so error pairs that hid together in one pass are split
 into separate, individually detectable blocks in the next."*
 
-**Honest limitation.** This is a teaching-grade Cascade: it is faithful in
-structure but not optimised for minimal information leakage, and the leakage
-estimate fed into privacy amplification is a simple, slightly conservative
-approximation rather than an exact accounting.
+**Implementation specifics (continued).** Every parity bit announced --
+block parities plus every BINCONF halving plus every back-prop BINCONF --
+is tallied exactly and returned alongside the corrected key, so privacy
+amplification can subtract the *real* leak rather than a conservative
+estimate. Combined with back-propagation this brings the measured secret
+rate to within ~10-15% of the Shannon-limit Cascade curve at every QBER
+below the abort threshold (see benchmark plot 6).
+
+**Honest limitation.** Cascade is not Shannon-optimal even with
+back-propagation: real high-end QKD post-processing uses LDPC codes with
+~5% structural overhead vs Cascade's ~15%. Plot 6 explicitly shows both
+the Shor-Preskill physics ceiling and a realistic Cascade reference so
+this overhead is legible rather than disguised. LDPC reconciliation is
+listed under Future Work.
 
 ### 3.6 Privacy amplification: SHAKE-128 truncation
 
@@ -219,8 +234,10 @@ quantities are subtracted:
    `n · h₂(QBER)`, where `h₂` is the binary entropy function. This is the
    standard worst-case bound linking observed error rate to leaked
    information.
-2. The number of bits leaked during reconciliation (approximated from the
-   number of corrections and the binary-search depth).
+2. The exact number of bits leaked during reconciliation (tallied by
+   Cascade itself — block parities plus every BINCONF halving plus every
+   back-propagation BINCONF — and returned to privacy amplification as an
+   integer, not an estimate).
 
 The remainder is the secure length. If it is non-positive the protocol
 aborts: there is simply no secret left to extract.
@@ -228,9 +245,37 @@ aborts: there is simply no secret left to extract.
 **Why a hash function is a valid extractor here.** A cryptographic hash like
 SHAKE-128 mixes its entire input so that any residual structure or partial
 adversary knowledge is spread across, and effectively destroyed in, the
-shorter output. It plays the role of a randomness extractor. (A fully rigorous
-treatment would use a proven two-universal hash family with finite-key
-parameters; that level of rigour is explicitly Future Work.)
+shorter output. It plays the role of a randomness extractor.
+
+**Honest limitation (the one computational link in the chain).** The
+Bennett-Brassard-Crepeau-Maurer 1995 privacy amplification theorem requires
+hashing with a *uniformly chosen function from a 2-universal family* (Toeplitz
+hashing, modular multiplication in GF(2^n), etc.). With such a family the
+extractor step is **information-theoretically** secure: no assumption about
+the adversary's computing power is needed.
+
+This implementation uses SHAKE-128 instead — a single deterministic
+extendable-output hash function, not a randomly-chosen member of a
+2-universal family. SHAKE-128 is conjectured to behave as a random oracle,
+under which assumption it is effectively a perfect extractor, but that is a
+**computational** assumption rather than an unconditional one. The
+architectural implication: every other step of the stack (BB84 sifting,
+Cascade reconciliation, OTP encryption, Wegman-Carter MAC) is unconditionally
+secure; only the extractor step relies on a computational assumption (and a
+very mild one — SHAKE-128 has no known classical or quantum attack faster
+than brute force, and the post-extraction keys are large enough that brute
+force is operationally infeasible).
+
+The architecturally pure alternative is **Toeplitz hashing with a fresh
+public random seed per session**, which is provably 2-universal and would
+restore unconditional security at the extractor step. It is listed under
+Future Work and would not change the KME or QTLS layers.
+
+**Defense answer, in one sentence.** *"The extractor uses SHAKE-128 rather
+than a 2-universal hash family, so the extractor step is computationally
+secure under the random-oracle assumption rather than information-theoretic;
+every other step of the stack is unconditional. The drop-in fix is Toeplitz
+hashing with a per-session public seed; it is listed under Future Work."*
 
 ### 3.7 Configurable abort threshold (Shor–Preskill bound)
 
@@ -857,7 +902,8 @@ line-by-line in front of a committee.
 - **QBER** — Quantum Bit Error Rate; the fraction of sifted bits where Alice
   and Bob disagree.
 - **Reconciliation** — classical error correction that makes the two sifted
-  strings identical (here: simplified Cascade).
+  strings identical (here: full Cascade with back-propagation, implemented
+  in C).
 - **Privacy amplification** — compressing the reconciled key to remove any
   partial knowledge an eavesdropper might hold (here: SHAKE-128 truncation).
 - **Shor–Preskill bound** — the ~11% QBER above which no secret key can be

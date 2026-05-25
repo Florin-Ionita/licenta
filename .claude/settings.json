@@ -24,7 +24,26 @@
       "Bash(kill 34575)",
       "Bash(kill 36101 36103)",
       "Bash(kill 38574)",
-      "Bash(.venv-linux/bin/python -m benchmarks.replot --only qber_sweep)"
+      "Bash(.venv-linux/bin/python -m benchmarks.replot --only qber_sweep)",
+      "Bash(timeout 60 .venv/Scripts/python.exe -c ' *)",
+      "PowerShell(winget --version)",
+      "PowerShell(winget install --id MSYS2.MSYS2 --silent --accept-package-agreements --accept-source-agreements 2>&1)",
+      "PowerShell($env:PATH = \"C:\\\\msys64\\\\ucrt64\\\\bin;\" + $env:PATH; & gcc --version | Select-Object -First 1; Write-Output \"---loading _cascade---\"; & C:\\\\licenta\\\\licenta\\\\.venv\\\\Scripts\\\\python.exe -c \"from qkd import _cascade; print\\('C loaded:', _cascade._LIB_HANDLE is not None\\)\" 2>&1 | Select-Object -Last 6)",
+      "Bash(.venv/Scripts/python.exe -c \"from qkd import _cascade; print\\('C loaded:', _cascade._LIB_HANDLE is not None\\)\")",
+      "PowerShell([Environment]::SetEnvironmentVariable\\('Path', [Environment]::GetEnvironmentVariable\\('Path','User'\\) + ';C:\\\\msys64\\\\ucrt64\\\\bin', 'User'\\); Write-Output \"added C:\\\\msys64\\\\ucrt64\\\\bin to user PATH \\(takes effect in new shells\\)\")",
+      "Bash(timeout 30 .venv/Scripts/python.exe -c ' *)",
+      "Bash(.venv/Scripts/python.exe -c \"from benchmarks import plotting\")",
+      "Bash(.venv/Scripts/python.exe -c \"from benchmarks.plotting import qber_sweep_plot; print\\(qber_sweep_plot\\)\")",
+      "Bash(timeout 90 .venv/Scripts/python.exe -m benchmarks.runner --profile lite --only qber_sweep)",
+      "Bash(timeout 90 .venv/Scripts/python.exe -m pytest tests -q --tb=short)",
+      "Bash(timeout 60 .venv/Scripts/python.exe -m benchmarks.replot)",
+      "Bash(sort -t, -k2 -n)",
+      "Bash(.venv/Scripts/python.exe -c \"import matplotlib, pylatexenc; print\\(matplotlib.__version__, pylatexenc.__version__\\)\")",
+      "Bash(.venv/Scripts/python.exe -m pip install matplotlib pylatexenc)",
+      "Bash(.venv/Scripts/python.exe scripts/draw_bb84_circuit.py)",
+      "Bash(.venv/Scripts/python.exe -m pytest tests/test_phase1_bb84.py::test_render_bb84_circuit_figure -v)",
+      "Bash(.venv/Scripts/python.exe scripts/draw_bb84_full_round.py)",
+      "Bash(.venv/Scripts/python.exe -m pytest -q)"
     ],
     "additionalDirectories": [
       "/tmp"

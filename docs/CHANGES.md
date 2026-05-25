@@ -33,8 +33,10 @@ protocol does not -- the limitation was the implementation, not the physics.
   1. Looks for `qkd/libcascade.so` (or `.dll` on Windows).
   2. If missing or older than `_cascade.c`, invokes the system C compiler
      (`cc`/`clang`/`gcc` on POSIX, `cl`/`gcc` on Windows) to (re)build it.
-  3. If compilation fails, falls back to the pure-Python Cascade with a
-     `RuntimeWarning`. The rest of the project keeps working.
+  3. If no compiler is available or compilation fails, the import raises
+     `ImportError`. The project deliberately has no Python fallback -- the
+     benchmarks and Phase 6/8 tests rely on the C speed to stay inside their
+     timeouts.
 
 **Effect.** Plot `06_qber_vs_rate` now traces the Shor-Preskill curve up to
 the 11% threshold, with ~12-15% Cascade overhead consistent with published
@@ -110,8 +112,9 @@ streamlit run viz/main.py                             # the demo
 The C compiler check happens on the first `import qkd.reconciliation`:
 - `cc --version` or `gcc --version` should produce output. If not:
   `sudo apt install build-essential` (Debian/Ubuntu) or equivalent.
-- If no compiler, you'll see a `RuntimeWarning` and the project falls
-  back to pure-Python Cascade -- slower but functionally identical.
+- **If no compiler is available the import raises `ImportError`** -- the
+  project has no Python fallback. Install a compiler before running tests
+  or benchmarks.
 
 ### Windows
 
@@ -131,7 +134,9 @@ The C extension needs **one** of:
   on PATH.
 - **MinGW-w64 (`gcc.exe`)** -- install via `winget install MSYS2.MSYS2`
   and add `C:\msys64\ucrt64\bin` to PATH.
-- **No compiler** -- the project still works, just on the Python fallback.
+
+Without one of these, `import qkd.reconciliation` raises `ImportError` and
+the test/benchmark suites will not run.
 
 To force a rebuild after editing `qkd/_cascade.c`:
 ```bash
@@ -153,8 +158,10 @@ Reads the CSVs in `docs/benchmarks/raw/`, writes PDFs to
 
 ```bash
 # 1. Verify the C extension loaded
-python -c "from qkd import _cascade; print('C:', _cascade.is_c_available())"
-# expected: C: True   (or a RuntimeWarning + C: False if no compiler)
+python -c "from qkd import _cascade; print('C loaded:', _cascade._LIB_HANDLE is not None)"
+# expected: C loaded: True
+# (if the C library cannot be built, the import itself raises ImportError --
+# there is no Python fallback)
 
 # 2. Confirm Cascade is correct on a small case
 python -c "
@@ -178,8 +185,8 @@ pytest -q
 | File | Change |
 |------|--------|
 | `qkd/_cascade.c` | NEW -- full Cascade in C |
-| `qkd/_cascade.py` | NEW -- ctypes loader + auto-build + Python fallback |
-| `qkd/reconciliation.py` | public `cascade_reconcile` dispatches to C; Python impl renamed to `_cascade_reconcile_python` and kept as fallback |
+| `qkd/_cascade.py` | NEW -- ctypes loader + auto-build; raises `ImportError` if no C compiler is available (no Python fallback) |
+| `qkd/reconciliation.py` | public `cascade_reconcile` re-exports the C entry point; the Python implementation has been removed |
 | `qkd/abstract_link.py` | producer uses `asyncio.to_thread` to offload Cascade |
 | `benchmarks/qber_sweep.py` | added `_cascade_secret_rate_Bps`, CSV has three series |
 | `benchmarks/plotting.py` | three-curve QBER plot |
@@ -187,3 +194,96 @@ pytest -q
 | `.gitignore` | ignore `*.so`, `*.dll`, `*.dylib` |
 | `README.md` | "Native C Cascade" section, build instructions |
 | `docs/CHANGES.md` | this file |
+
+---
+
+## Round 2: plot 06 now honours the Shor-Preskill ceiling
+
+In the first regenerated `06_qber_vs_rate.pdf` the measured orange diamonds
+sat *above* the blue Shor-Preskill physics ceiling at low QBER -- physically
+impossible, so a measurement artefact. Three related bugs were responsible;
+fixing them yields a plot where orange is strictly below blue at every QBER,
+tracks the realistic Cascade curve within ~10-15% at low QBER, and pulls
+further below it as QBER grows (the well-known Cascade penalty).
+
+### 2.1 Producer wall-clock-time did not equal channel-time
+
+**Why.** `abstract_qkd_link` did `await asyncio.sleep(1.0)` *before* each
+distillation. With a 1 Mbit block taking ~1.2 s of Cascade, one iteration
+actually lasted ~2.2 s, so the link silently emitted at *half* its declared
+`key_rate_bps`. Every measured point was pulled down accordingly.
+
+**Fix.** Real-time pacing anchor in
+[`qkd/abstract_link.py`](../qkd/abstract_link.py):
+
+```python
+next_tick = time.monotonic()
+while not stopped:
+    next_tick += 1.0
+    block = await asyncio.to_thread(generate_block, ...)
+    await out_queue.put(block)
+    delay = next_tick - time.monotonic()
+    if delay > 0:
+        await asyncio.sleep(delay)
+    else:
+        # Distillation exceeded one simulated second on this host: we are
+        # CPU-bound. Re-anchor `next_tick` to now so we do not accumulate
+        # an ever-growing backlog of missed ticks.
+        next_tick = time.monotonic()
+```
+
+If Cascade overruns the 1 s tick (e.g. >10 Mbit blocks on a slow host) the
+link runs flat-out instead of accumulating phantom backlog. Document under
+evaluation limitations rather than silently distorting the rate.
+
+### 2.2 Warm-up block inflated the measurement
+
+**Why.** `_measure_one` was counting the first block's *bytes* but starting
+the clock *after* it arrived. The producer had spent ~1-2 s making that
+block, but `elapsed` only covered the steady-state window -- so we measured
+"N+1 blocks of bytes in N blocks of time" and rate sat above the ceiling.
+
+**Fix.** Discard the warm-up block; only blocks that arrive *after* the
+timer starts count toward both bytes and time.
+
+### 2.3 Drained blocks counted bytes outside the timed window
+
+**Why.** After `stop.set()` the bench drained any blocks still queued.
+Each drained block represented up to a full simulated channel-second
+*outside* the measurement window, so its bytes were counted but its
+production time was not -- same direction of inflation as 2.2.
+
+**Fix.** Don't drain. A block finished inside the window but not yet pulled
+at the deadline is lost, making the estimate slightly conservative (correct
+direction).
+
+### 2.4 Measurement now timed between block arrivals, not against a wall clock
+
+**Why.** A fixed `t0 + duration` deadline is forced into off-by-one-block
+slack -- the deadline can fall anywhere in the producer's 1 Hz heartbeat,
+so the same rate sometimes measures high, sometimes low.
+
+**Fix.** Record `t_first` when block #1 of the steady-state window arrives
+and `t_last` when block #N arrives. The interval `t_last - t_first` is
+exactly `N-1` channel-seconds of work that produced exactly the counted
+bytes. No off-by-one slack on either side.
+
+### 2.5 Files touched
+
+| File | Change |
+|------|--------|
+| `qkd/abstract_link.py` | real-time pacing anchor (`next_tick`) so wall-clock=channel-clock; CPU-bound fallback documented |
+| `benchmarks/qber_sweep.py` | discard warm-up block; no drain after stop; elapsed = `t_last - t_first` |
+
+### 2.6 Verification
+
+```
+.venv\Scripts\python.exe -m pytest -q                          # 52 passed
+.venv\Scripts\python.exe -m benchmarks.runner --profile lite --only qber_sweep
+.venv\Scripts\python.exe -m benchmarks.replot --only qber_sweep
+```
+
+Sanity numbers at QBER=0.5%: theoretical 119 KiB/s, realistic Cascade
+118 KiB/s, **measured ~105 KiB/s** -- below both curves, with a ~12% gap to
+the cascade reference explained by this implementation's conservative
+`corrected * log2(n)` leakage estimate vs. the textbook 1.15× factor.

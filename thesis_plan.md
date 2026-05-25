@@ -4,7 +4,7 @@
 
 ## 0. Executive summary (TL;DR)
 
-Build a **"TLS 1.3-shaped" protocol in pure Python**, where **the session key comes exclusively from a simulated QKD network**. Messages are encrypted with **One-Time Pad (OTP)** and authenticated with **Wegman-Carter MAC** — both providing *information-theoretic* security, meaning unbreakable regardless of the attacker's computational power (including quantum computers).
+Build a **"TLS 1.3-shaped" protocol in pure Python**, where **the session key comes exclusively from a simulated QKD network**. Messages are encrypted with **One-Time Pad (OTP)** and authenticated with **Wegman-Carter MAC** — both providing *information-theoretic* security, meaning unbreakable regardless of the attacker's computational power (including quantum computers). *Single acknowledged caveat:* privacy amplification uses SHAKE-128 rather than a 2-universal hash family, so the extractor step alone rests on the random-oracle conjecture (a computational assumption); every other step is unconditional. The drop-in fix is Toeplitz hashing with a per-session public seed — listed under Future Work, and discussed in [README](README.md) + [design_notes §3.6](docs/design_notes.md).
 
 You use **Qiskit Aer** for the visual BB84 simulation (the demo wow-factor for your defense), **FastAPI** to expose the KME according to ETSI GS QKD 014, the **`cryptography`** library only for utilities (HKDF, hash primitives), and **Streamlit + Plotly** for live visualization. The whole project is pure Python — no liboqs, no native compilation, no PQC libraries.
 

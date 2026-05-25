@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import asyncio
 import secrets
+import time
 
 from qkd.keyblock import KeyBlock
 from qkd.reconciliation import (
@@ -116,22 +117,46 @@ async def abstract_qkd_link(
     attenuation = max(0.05, 1.0 - 0.03 * distance_km)
     effective_bits = max(8, int(key_rate_bps * attenuation))
 
+    # Real-time pacing: each iteration must consume exactly 1 second of
+    # wall-clock so that wall-clock-time maps 1:1 to simulated channel-time.
+    # If we just did `await asyncio.sleep(1.0)` before distilling, the actual
+    # tick would be `1.0 + cascade_time` (~2.2 s for a 1 Mbit block on this
+    # CPU), so the link would secretly emit at half its declared rate and
+    # the measured throughput plot would sit well below the theoretical
+    # curves *despite the reconciliation being correct*. The fix is the
+    # standard rate-limiter idiom: anchor a `next_tick` deadline, do the
+    # work, then sleep only for the time that remains until the deadline.
+    #
+    # If a single distillation overruns its 1 s budget (e.g. a >10 Mbit
+    # block on a slow host), wall-clock will fall behind channel-time --
+    # there is nothing the simulator can do to make the CPU faster. We let
+    # the link run flat-out in that regime (negative remaining time -> no
+    # sleep) and document it under evaluation limitations rather than
+    # silently distort the rate.
+    next_tick = time.monotonic()
     while stop_event is None or not stop_event.is_set():
-        await asyncio.sleep(1.0)
+        next_tick += 1.0
         try:
-            # Cascade reconciliation is CPU-bound and (for large blocks)
-            # takes hundreds of milliseconds. Run it in a worker thread so
-            # the asyncio event loop stays responsive: handshakes, KME REST
-            # calls, and the dashboard can all keep ticking while one block
-            # distils. Without this offload the producer's per-iteration
-            # sleep(1.0) silently stretches to sleep(1.0) + cascade_time,
-            # making the apparent key rate up to several times lower than
-            # the physical channel would yield.
+            # Cascade is CPU-bound; offload to a worker thread so the
+            # asyncio event loop stays responsive for the KME, handshakes,
+            # and the dashboard while one block distils.
             block = await asyncio.to_thread(
                 generate_block, effective_bits, qber, qber_abort,
             )
         except QBERTooHighError:
             # Unusable second (QBER above the security gate): skip and retry,
-            # exactly as a real deployment would discard the frame.
-            continue
-        await out_queue.put(block)
+            # exactly as a real deployment would discard the frame. Still
+            # pace the next iteration to the simulated 1 s tick.
+            block = None
+
+        if block is not None:
+            await out_queue.put(block)
+
+        delay = next_tick - time.monotonic()
+        if delay > 0:
+            await asyncio.sleep(delay)
+        else:
+            # Distillation exceeded the simulated tick: we are CPU-bound.
+            # Re-anchor `next_tick` to now so we do not accumulate an
+            # ever-growing backlog of "missed" ticks.
+            next_tick = time.monotonic()
