@@ -52,7 +52,8 @@
       "Bash(typst compile *)",
       "Bash(python3 -c \"import subprocess; r = subprocess.run\\(['pdfinfo', 'thesis/try.pdf'], capture_output=True, text=True\\); print\\(r.stdout\\)\")",
       "Bash(pdfinfo thesis/try.pdf)",
-      "Bash(pdfinfo thesis/thesis/try.pdf)"
+      "Bash(pdfinfo thesis/thesis/try.pdf)",
+      "Bash(where typst *)"
     ],
     "additionalDirectories": [
       "/tmp"
