@@ -43,7 +43,16 @@
       "Bash(.venv/Scripts/python.exe scripts/draw_bb84_circuit.py)",
       "Bash(.venv/Scripts/python.exe -m pytest tests/test_phase1_bb84.py::test_render_bb84_circuit_figure -v)",
       "Bash(.venv/Scripts/python.exe scripts/draw_bb84_full_round.py)",
-      "Bash(.venv/Scripts/python.exe -m pytest -q)"
+      "Bash(.venv/Scripts/python.exe -m pytest -q)",
+      "Bash(git check-ignore *)",
+      "Bash(.venv-linux/bin/python -m pytest -q)",
+      "Bash(git submodule *)",
+      "Bash(ps -p 56508 -o pid,user,cmd)",
+      "Bash(sudo kill -9 56684 56668 56632 56508 56506 56507)",
+      "Bash(typst compile *)",
+      "Bash(python3 -c \"import subprocess; r = subprocess.run\\(['pdfinfo', 'thesis/try.pdf'], capture_output=True, text=True\\); print\\(r.stdout\\)\")",
+      "Bash(pdfinfo thesis/try.pdf)",
+      "Bash(pdfinfo thesis/thesis/try.pdf)"
     ],
     "additionalDirectories": [
       "/tmp"
