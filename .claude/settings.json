@@ -55,7 +55,8 @@
       "Bash(pdfinfo thesis/thesis/try.pdf)",
       "Bash(where typst *)",
       "Bash(python -m pytest tests/ -x)",
-      "Bash(python -m pytest tests/)"
+      "Bash(python -m pytest tests/)",
+      "Bash(grep -rn '\\\\$ ' /home/florin/licenta/thesis/thesis/chapters/)"
     ],
     "additionalDirectories": [
       "/tmp"
