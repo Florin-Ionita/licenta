@@ -10,11 +10,15 @@ QTLS replaces that single step with a QKD key lookup:
                        (the KMEs are synchronised, Phase 3) and confirms.
     3. Both sides feed that QKD key into the identical TLS 1.3 HKDF schedule
        (Phase 5 keyschedule.py) and derive traffic keys.
-    4. Finished     -- each side sends an HMAC over the handshake transcript
-                       using a key derived from the QKD secret. A correct
-                       Finished proves the peer holds the *same* QKD key
-                       (mutual key confirmation) and that the transcript was
-                       not tampered with.
+    4. Finished     -- each side sends a Wegman-Carter MAC over the handshake
+                       transcript. The 16-byte hash key per direction comes
+                       from HKDF over the handshake traffic secret; the
+                       one-time mask comes from a dedicated, never-reused
+                       slice of the QKD key. A correct Finished proves the
+                       peer holds the *same* QKD key (mutual key
+                       confirmation) and that the transcript was not
+                       tampered with -- information-theoretically, not just
+                       computationally.
 
 Everything else -- message framing, transcript hashing, the Finished check --
 follows RFC 8446's structure, which is what justifies calling the protocol
@@ -105,10 +109,13 @@ class ServerHello:
 class Finished:
     """Key-confirmation MAC over the handshake transcript.
 
-    ``verify_data`` is HMAC(finished_key, transcript_hash). Because
-    ``finished_key`` is derived from the QKD secret, only a peer holding the
-    same QKD key can produce a value that checks out -- this is the moment the
-    handshake proves both endpoints really share the QKD key.
+    ``verify_data`` is a Wegman-Carter tag over the transcript: the polynomial
+    hash key ``k_H`` is derived from the handshake traffic secret via HKDF
+    (reusable, per Portmann), and the 16-byte one-time mask is taken from a
+    dedicated slice of the QKD key (never reused). Because both inputs
+    ultimately depend on the QKD secret, only a peer holding the same QKD key
+    can produce a tag that verifies -- and the verification holds
+    information-theoretically, not just computationally.
     """
 
     verify_data: str  # hex

@@ -107,7 +107,7 @@ def test_enc_on_a_then_dec_on_b_returns_identical_material():
 # Security properties
 # --------------------------------------------------------------------------
 
-def test_unauthorised_master_is_forbidden():
+def test_unauthorised_master_is_rejected():
     a, b = make_kme_pair()
     _seed(a, 1)  # no authorise() call
     client = TestClient(create_kme_app(a, peer_kme_id=b.kme_id))
@@ -116,7 +116,8 @@ def test_unauthorised_master_is_forbidden():
         json={"number": 1},
         headers={"X-SAE-ID": MASTER},
     )
-    assert r.status_code == 403
+    # ETSI 014 lists only 400/401/503 for enc_keys; ACL refusal -> 401.
+    assert r.status_code == 401
 
 
 def test_slave_cannot_fetch_unactivated_key():
@@ -147,13 +148,15 @@ def test_wrong_slave_cannot_fetch_reserved_key():
         headers={"X-SAE-ID": MASTER},
     ).json()["keys"][0]["key_ID"]
 
-    # A different SAE tries to fetch the key reserved for SLAVE -> 403.
+    # A different SAE tries to fetch the key reserved for SLAVE.
+    # ETSI 014 §5.4 mandates 401 when the requester is not the SAE the key
+    # was reserved for.
     r = cb.post(
         f"/api/v1/keys/{MASTER}/dec_keys",
         json={"key_IDs": [{"key_ID": key_id}]},
         headers={"X-SAE-ID": "SAE-INTRUDER"},
     )
-    assert r.status_code == 403
+    assert r.status_code == 401
 
 
 def test_pool_exhaustion_returns_503_backpressure():
@@ -177,6 +180,81 @@ def test_malformed_key_id_is_400():
         headers={"X-SAE-ID": SLAVE},
     )
     assert r.status_code == 400
+    body = r.json()
+    # ETSI 014 §6.5 wire format.
+    assert "message" in body and "detail" not in body
+    # ETSI 014 §6.4 mandates this exact message string.
+    assert body["message"] == "one or more keys specified are not found on KME"
+
+
+# --------------------------------------------------------------------------
+# ETSI 014 spec-compliance extras (error body format, GET variants, size%8)
+# --------------------------------------------------------------------------
+
+def test_error_body_uses_etsi_message_field():
+    """ETSI §6.5: error body is `{message, details}`, not FastAPI's `{detail}`."""
+    a, b = make_kme_pair()
+    client = TestClient(create_kme_app(a, peer_kme_id=b.kme_id))
+    r = client.get(f"/api/v1/keys/{SLAVE}/status")  # no X-SAE-ID -> 401
+    assert r.status_code == 401
+    body = r.json()
+    assert body == {"message": "missing SAE identity", "details": None}
+
+
+def test_get_enc_keys_simple_request_succeeds():
+    """ETSI §6.2: SAE may use GET when only `number` and/or `size` are set."""
+    a, b = make_kme_pair()
+    a.authorise(MASTER, SLAVE)
+    _seed(a, 3)
+    client = TestClient(create_kme_app(a, peer_kme_id=b.kme_id))
+    r = client.get(
+        f"/api/v1/keys/{SLAVE}/enc_keys",
+        params={"number": 2, "size": 256},
+        headers={"X-SAE-ID": MASTER},
+    )
+    assert r.status_code == 200
+    assert len(r.json()["keys"]) == 2
+
+
+def test_get_dec_keys_single_id_succeeds():
+    """ETSI §6.4: SAE may use GET when a single key_ID is requested."""
+    a, b = make_kme_pair()
+    shared = KeyBlock(material=b"k" * 32, source="bb84-visual", qber=0.0)
+    a.add_block(shared)
+    b.add_block(shared)
+    a.authorise(MASTER, SLAVE)
+
+    ca = TestClient(create_kme_app(a, peer_kme_id=b.kme_id))
+    cb = TestClient(create_kme_app(b, peer_kme_id=a.kme_id))
+    kid = ca.post(
+        f"/api/v1/keys/{SLAVE}/enc_keys",
+        json={"number": 1},
+        headers={"X-SAE-ID": MASTER},
+    ).json()["keys"][0]["key_ID"]
+
+    r = cb.get(
+        f"/api/v1/keys/{MASTER}/dec_keys",
+        params={"key_ID": kid},
+        headers={"X-SAE-ID": SLAVE},
+    )
+    assert r.status_code == 200
+    assert r.json()["keys"][0]["key_ID"] == kid
+
+
+def test_size_not_multiple_of_8_is_400_with_spec_message():
+    """ETSI §6.2: KMEs that only support multiples of 8 must reject with this
+    exact error message."""
+    a, b = make_kme_pair()
+    a.authorise(MASTER, SLAVE)
+    _seed(a, 1)
+    client = TestClient(create_kme_app(a, peer_kme_id=b.kme_id))
+    r = client.post(
+        f"/api/v1/keys/{SLAVE}/enc_keys",
+        json={"number": 1, "size": 100},  # 100 % 8 != 0
+        headers={"X-SAE-ID": MASTER},
+    )
+    assert r.status_code == 400
+    assert r.json()["message"] == "size shall be a multiple of 8"
 
 
 def test_key_expiry():

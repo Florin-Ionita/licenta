@@ -141,7 +141,9 @@ static void pass_state_free(pass_state_t *s) {
 static int pass_state_init(pass_state_t *s, const uint8_t *alice,
                             const uint8_t *bob, const int32_t *perm,
                             int32_t n, int32_t block_size) {
+    
     int32_t num_blocks = (n + block_size - 1) / block_size;
+    
     s->num_blocks = num_blocks;
     s->indices = (int32_t*)malloc((size_t)n * sizeof(int32_t));
     s->pos_of_index = (int32_t*)malloc((size_t)n * sizeof(int32_t));
@@ -151,18 +153,21 @@ static int pass_state_init(pass_state_t *s, const uint8_t *alice,
     s->a_perm = (uint8_t*)malloc((size_t)n);
     s->b_perm = (uint8_t*)malloc((size_t)n);
     s->block_parity_a = (uint8_t*)malloc((size_t)num_blocks);
+    
     if (!s->indices || !s->pos_of_index || !s->block_starts ||
         !s->block_ends || !s->block_of_pos || !s->a_perm || !s->b_perm ||
         !s->block_parity_a) {
         pass_state_free(s);
         return -1;
     }
+    
     memcpy(s->indices, perm, (size_t)n * sizeof(int32_t));
     for (int32_t sp = 0; sp < n; ++sp) {
         s->pos_of_index[perm[sp]] = sp;
         s->a_perm[sp] = alice[perm[sp]];
         s->b_perm[sp] = bob[perm[sp]];
     }
+    
     for (int32_t b = 0; b < num_blocks; ++b) {
         int32_t start = b * block_size;
         int32_t end = start + block_size;

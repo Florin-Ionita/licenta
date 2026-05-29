@@ -155,5 +155,25 @@ class KeySchedule:
 
     @staticmethod
     def finished_key(traffic_secret: bytes) -> bytes:
-        """Key for the Finished MAC (RFC 8446: a separate Expand-Label)."""
+        """Key for the Finished MAC (RFC 8446: a separate Expand-Label).
+
+        Retained for backwards compatibility with code that still uses an
+        HMAC-shaped Finished. The current QTLS handshake uses
+        :meth:`finished_wc_key` instead, see that method's docstring.
+        """
         return hkdf_expand_label(traffic_secret, "finished", b"", _HASH_LEN)
+
+    @staticmethod
+    def finished_wc_key(traffic_secret: bytes) -> bytes:
+        """16-byte Wegman-Carter hash key for the Finished message.
+
+        The Finished MAC is the one handshake step that proves both peers
+        hold the same QKD secret. To keep that step information-theoretically
+        secure (rather than HMAC-computational), the QTLS handshake builds
+        Finished as a Wegman-Carter tag over the transcript. The hash key
+        ``k_H`` may be reused (Portmann key recycling); the freshness
+        requirement falls on the per-Finished one-time mask ``r``, which the
+        caller draws directly from a dedicated, never-reused 16-byte slice of
+        the QKD key (see ``qtls.connection``).
+        """
+        return hkdf_expand_label(traffic_secret, "wc finished", b"", 16)

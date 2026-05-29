@@ -49,5 +49,10 @@ async def fan_out_feeder(
             block = await asyncio.wait_for(in_queue.get(), timeout=0.5)
         except asyncio.TimeoutError:
             continue
-        kme_a.add_block(block)
-        kme_b.add_block(block)
+        # Both add_block calls run under the shared lock (the pair adopted one
+        # RLock via link_peer), but we hold it explicitly here so the two
+        # inserts commit as a single atomic step -- no take_keys can observe
+        # the block in one KME but not the other.
+        with kme_a._lock:
+            kme_a.add_block(block)
+            kme_b.add_block(block)

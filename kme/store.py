@@ -78,7 +78,9 @@ class KeyStore:
         self._keys: dict[uuid.UUID, _StoredKey] = {}
         # Access control: master_sae -> set of slave_sae it may share with.
         self._acl: dict[str, set[str]] = {}
-        self._lock = threading.Lock()
+        # Reentrant so take_keys can call peer._apply_reservation while still
+        # holding the lock once the pair shares one lock object via link_peer.
+        self._lock: threading.RLock = threading.RLock()
         # The peer KME on the other end of the link. A reservation made here
         # is mirrored to the peer, modelling the ETSI KME-to-KME
         # synchronisation channel (real KMEs coordinate which key_ID is
@@ -88,8 +90,21 @@ class KeyStore:
     # -- configuration -----------------------------------------------------
 
     def link_peer(self, peer: "KeyStore") -> None:
-        """Connect this KME to its partner so reservations stay in sync."""
+        """Connect this KME to its partner so reservations stay in sync.
+
+        Both stores adopt a single shared RLock after this call. In a real
+        distributed deployment the two KMEs sit on different machines and
+        coordinate via an atomic transaction on the authenticated KME-to-KME
+        channel (typically two-phase commit). Here the equivalent atomicity
+        is achieved by having both stores share the same in-process lock:
+        feeder add_block, take_keys, and the mirrored _apply_reservation are
+        serialised across the pair, eliminating the feeder/take_keys and
+        concurrent-take_keys races. Documented as a simulation shortcut, not
+        a production design.
+        """
         self._peer = peer
+        peer._peer = self
+        peer._lock = self._lock
 
     def authorise(self, master_sae: str, slave_sae: str) -> None:
         """Allow ``master_sae`` to obtain keys destined for ``slave_sae``.
@@ -184,13 +199,12 @@ class KeyStore:
             reservations = [
                 (sk.block.key_id, master_sae, slave_sae) for sk in chosen
             ]
-
-        # Mirror the reservation to the peer KME *outside* our lock (the peer
-        # takes its own lock). This is the simulated KME-to-KME sync channel:
-        # after this returns, the slave can fetch the same key_ID from the
-        # peer and get byte-identical material.
-        if self._peer is not None:
-            self._peer._apply_reservation(reservations)
+            # Mirror the reservation to the peer *while still holding the
+            # shared lock* so the local mark + peer mirror happen atomically
+            # across the pair. Models the KME-to-KME synchronisation channel
+            # as a single committed transaction.
+            if self._peer is not None:
+                self._peer._apply_reservation(reservations)
 
         return [sk.block for sk in chosen]
 

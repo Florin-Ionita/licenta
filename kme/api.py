@@ -1,25 +1,26 @@
 """FastAPI application implementing the ETSI GS QKD 014 V1.1.1 REST interface.
 
-Three endpoints, exactly as the standard defines them:
+Three endpoints, exactly as the standard defines them (clauses 5.2-5.4):
 
-    GET  /api/v1/keys/{slave_SAE_ID}/status      -> Status
-    POST /api/v1/keys/{slave_SAE_ID}/enc_keys    -> KeyContainer  (master pull)
-    POST /api/v1/keys/{master_SAE_ID}/dec_keys   -> KeyContainer  (slave fetch)
+    GET  /api/v1/keys/{slave_SAE_ID}/status
+    GET  /api/v1/keys/{slave_SAE_ID}/enc_keys?number=N&size=S   (simple only)
+    POST /api/v1/keys/{slave_SAE_ID}/enc_keys
+    GET  /api/v1/keys/{master_SAE_ID}/dec_keys?key_ID=...        (single ID)
+    POST /api/v1/keys/{master_SAE_ID}/dec_keys
 
-SAE identity. ETSI 014 authenticates SAEs with mTLS and derives the SAE ID
-from the client certificate's Common Name. uvicorn does not surface the peer
-certificate to the route handler conveniently, so SAE identity is resolved by
-a single injectable dependency :func:`current_sae`:
+Authentication scope. ETSI 014 (clause 5.1) mandates mTLS with the SAE ID
+derived from the client certificate's Common Name. The cryptographic machinery
+for that mTLS is built in `kme/certs.py` and exercised by
+`test_mtls_cert_chain_round_trip`, but at runtime SAE identity is resolved
+through the `current_sae` dependency, which reads an `X-SAE-ID` header. This is
+a documented simplification (see the thesis "Authentication scope" paragraph);
+a production deployment would replace the header lookup with a middleware that
+extracts the CN from the verified peer certificate, leaving the rest of the
+KeyStore and API code unchanged.
 
-  * In production/mTLS mode the reverse path would read the verified client
-    cert CN (the cert machinery is built in Phase 3's `certs` helper and
-    documented in design_notes).
-  * For tests and local runs the dependency falls back to the
-    ``X-SAE-ID`` header.
-
-Keeping identity in one dependency means the endpoint logic is identical
-regardless of how the SAE was authenticated -- a clean seam, documented as a
-deliberate simplification rather than a security claim.
+Error body. ETSI 014 clause 6.5 prescribes `{"message": ..., "details": ...}`.
+FastAPI's `HTTPException` default body is `{"detail": ...}`; we install a
+custom exception handler that translates it to the spec wire format.
 """
 
 from __future__ import annotations
@@ -27,12 +28,14 @@ from __future__ import annotations
 import base64
 import uuid
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Path
+from fastapi import Depends, FastAPI, Header, HTTPException, Path, Query, Request
+from fastapi.responses import JSONResponse
 
 from kme.models import (
     ErrorMessage,
     Key,
     KeyContainer,
+    KeyIDs,
     KeyIDsRequest,
     KeyRequest,
     Status,
@@ -56,6 +59,27 @@ def current_sae(x_sae_id: str | None = Header(default=None)) -> str:
     return x_sae_id
 
 
+async def _etsi_http_exception_handler(
+    request: Request, exc: HTTPException
+) -> JSONResponse:
+    """Convert FastAPI's default `{detail: ...}` body to ETSI 014 §6.5 shape.
+
+    Spec wire format is `{"message": str, "details": list[dict] | null}`. If
+    the caller passed a dict as the HTTPException detail (so it could carry
+    structured `details`), respect that; otherwise treat the string as the
+    `message` and emit `details: null`.
+    """
+    detail = exc.detail
+    if isinstance(detail, dict) and "message" in detail:
+        body = {
+            "message": detail["message"],
+            "details": detail.get("details"),
+        }
+    else:
+        body = {"message": str(detail), "details": None}
+    return JSONResponse(status_code=exc.status_code, content=body)
+
+
 def create_kme_app(store: KeyStore, peer_kme_id: str) -> FastAPI:
     """Build a FastAPI app bound to one :class:`KeyStore`.
 
@@ -66,11 +90,18 @@ def create_kme_app(store: KeyStore, peer_kme_id: str) -> FastAPI:
         title=f"KME {store.kme_id} -- ETSI GS QKD 014",
         version="1.1.1",
     )
+    app.add_exception_handler(HTTPException, _etsi_http_exception_handler)
+
+    _std_responses = {
+        400: {"model": ErrorMessage},
+        401: {"model": ErrorMessage},
+        503: {"model": ErrorMessage},
+    }
 
     @app.get(
         "/api/v1/keys/{slave_SAE_ID}/status",
         response_model=Status,
-        responses={401: {"model": ErrorMessage}},
+        responses=_std_responses,
     )
     def get_status(
         slave_SAE_ID: str = Path(...),
@@ -91,28 +122,26 @@ def create_kme_app(store: KeyStore, peer_kme_id: str) -> FastAPI:
             max_SAE_ID_count=0,
         )
 
-    @app.post(
-        "/api/v1/keys/{slave_SAE_ID}/enc_keys",
-        response_model=KeyContainer,
-        responses={
-            400: {"model": ErrorMessage},
-            401: {"model": ErrorMessage},
-            403: {"model": ErrorMessage},
-        },
-    )
-    def post_enc_keys(
-        body: KeyRequest,
-        slave_SAE_ID: str = Path(...),
-        sae: str = Depends(current_sae),
+    def _serve_enc_keys(
+        sae: str, slave_SAE_ID: str, number: int, size: int | None
     ) -> KeyContainer:
-        """Master SAE pulls fresh keys destined for ``slave_SAE_ID``."""
+        """Shared body for GET and POST variants of enc_keys."""
+        # ETSI 014 §6.2: if the KME only supports keys whose size is a
+        # multiple of 8, it shall reject other sizes with this exact message.
+        if size is not None and size % 8 != 0:
+            raise HTTPException(
+                status_code=400,
+                detail="size shall be a multiple of 8",
+            )
         try:
-            blocks = store.take_keys(sae, slave_SAE_ID, body.number)
+            blocks = store.take_keys(sae, slave_SAE_ID, number)
         except AccessDeniedError as e:
-            raise HTTPException(status_code=403, detail=str(e))
+            # Spec lists only 400/401/503 for these endpoints; ACL refusal
+            # is reported as 401 (the SAE is "not authenticated for this
+            # request"), matching how the spec uses 401 in §5.4.
+            raise HTTPException(status_code=401, detail=str(e))
         except KeyPoolEmptyError as e:
-            # 503: the key pool is temporarily exhausted -- this is the
-            # *expected* QKD back-pressure behaviour, not a server fault.
+            # 503: pool temporarily exhausted -- expected QKD back-pressure.
             raise HTTPException(status_code=503, detail=str(e))
         return KeyContainer(
             keys=[
@@ -124,31 +153,62 @@ def create_kme_app(store: KeyStore, peer_kme_id: str) -> FastAPI:
             ]
         )
 
-    @app.post(
-        "/api/v1/keys/{master_SAE_ID}/dec_keys",
+    @app.get(
+        "/api/v1/keys/{slave_SAE_ID}/enc_keys",
         response_model=KeyContainer,
-        responses={
-            400: {"model": ErrorMessage},
-            401: {"model": ErrorMessage},
-            403: {"model": ErrorMessage},
-        },
+        responses=_std_responses,
     )
-    def post_dec_keys(
-        body: KeyIDsRequest,
-        master_SAE_ID: str = Path(...),
+    def get_enc_keys(
+        slave_SAE_ID: str = Path(...),
+        number: int = Query(1, ge=1),
+        size: int | None = Query(None),
         sae: str = Depends(current_sae),
     ) -> KeyContainer:
-        """Slave SAE fetches, by key_ID, the keys a master reserved for it."""
+        """Master SAE pulls fresh keys via GET (simple-request variant).
+
+        Per ETSI 014 §6.2, when ``number`` and/or ``size`` are the only
+        request items, the SAE may use GET with URL query parameters instead
+        of POST.
+        """
+        return _serve_enc_keys(sae, slave_SAE_ID, number, size)
+
+    @app.post(
+        "/api/v1/keys/{slave_SAE_ID}/enc_keys",
+        response_model=KeyContainer,
+        responses=_std_responses,
+    )
+    def post_enc_keys(
+        body: KeyRequest,
+        slave_SAE_ID: str = Path(...),
+        sae: str = Depends(current_sae),
+    ) -> KeyContainer:
+        """Master SAE pulls fresh keys destined for ``slave_SAE_ID``."""
+        return _serve_enc_keys(sae, slave_SAE_ID, body.number, body.size)
+
+    def _serve_dec_keys(sae: str, key_id_strings: list[str]) -> KeyContainer:
+        """Shared body for GET and POST variants of dec_keys."""
         try:
-            ids = [uuid.UUID(entry.key_ID) for entry in body.key_IDs]
+            ids = [uuid.UUID(s) for s in key_id_strings]
         except ValueError:
-            raise HTTPException(status_code=400, detail="malformed key_ID")
+            # Spec §6.4: if a requested key is not present, the message must
+            # be exactly this string. A malformed UUID is treated as "key
+            # not found on this KME" for the purpose of the error body.
+            raise HTTPException(
+                status_code=400,
+                detail="one or more keys specified are not found on KME",
+            )
         try:
             blocks = store.get_keys_by_id(sae, ids)
-        except KeyNotFoundError as e:
-            raise HTTPException(status_code=400, detail=str(e))
+        except KeyNotFoundError:
+            raise HTTPException(
+                status_code=400,
+                detail="one or more keys specified are not found on KME",
+            )
         except AccessDeniedError as e:
-            raise HTTPException(status_code=403, detail=str(e))
+            # Spec §5.4: "The KME shall reject the request with a 401 HTTP
+            # status code if the SAE ID of the requestor was not an SAE ID
+            # supplied to the 'Get key' method ..."
+            raise HTTPException(status_code=401, detail=str(e))
         return KeyContainer(
             keys=[
                 Key(
@@ -158,5 +218,36 @@ def create_kme_app(store: KeyStore, peer_kme_id: str) -> FastAPI:
                 for b in blocks
             ]
         )
+
+    @app.get(
+        "/api/v1/keys/{master_SAE_ID}/dec_keys",
+        response_model=KeyContainer,
+        responses=_std_responses,
+    )
+    def get_dec_keys(
+        master_SAE_ID: str = Path(...),
+        key_ID: str = Query(..., description="UUID of a single requested key"),
+        sae: str = Depends(current_sae),
+    ) -> KeyContainer:
+        """Slave SAE fetches a single key via GET (single-ID variant).
+
+        Per ETSI 014 §6.4, when a single key_ID is specified and no extension
+        fields are needed, the SAE may use GET with a URL query parameter
+        instead of POST.
+        """
+        return _serve_dec_keys(sae, [key_ID])
+
+    @app.post(
+        "/api/v1/keys/{master_SAE_ID}/dec_keys",
+        response_model=KeyContainer,
+        responses=_std_responses,
+    )
+    def post_dec_keys(
+        body: KeyIDsRequest,
+        master_SAE_ID: str = Path(...),
+        sae: str = Depends(current_sae),
+    ) -> KeyContainer:
+        """Slave SAE fetches, by key_ID, the keys a master reserved for it."""
+        return _serve_dec_keys(sae, [entry.key_ID for entry in body.key_IDs])
 
     return app

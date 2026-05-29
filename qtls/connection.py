@@ -13,15 +13,24 @@ client->server records, one for server->client. If both directions drew from
 the same bytes they would XOR plaintext into the same key positions = OTP
 reuse across directions. Splitting first makes that impossible. Each direction
 additionally gets its own reusable Wegman-Carter hash key from the schedule.
+
+Finished MAC. Real TLS 1.3 uses HMAC for the Finished verify_data, which is a
+*computational* MAC. To keep the QTLS handshake information-theoretically
+secure end to end, we replace HMAC with a Wegman-Carter polynomial-hash MAC
+(see :mod:`qtls.crypto.wc_mac` and Portmann 2014). The 16-byte hash key per
+direction comes from HKDF over the handshake traffic secret (Portmann key
+recycling permits reuse); the one-time mask ``r`` per direction comes from a
+*dedicated, never-reused* 16-byte slice of the QKD key, disjoint from both
+the HKDF schedule seed and the record-layer OTP material.
 """
 
 from __future__ import annotations
 
 import asyncio
-import hmac
 import os
 
 from qtls.crypto.otp import OTPKeyStream
+from qtls.crypto.wc_mac import WegmanCarterMAC
 from qtls.handshake import (
     ClientHello,
     Finished,
@@ -37,9 +46,30 @@ from qtls.records import (
     read_record,
 )
 
-# Bytes of the QKD key reserved for the HKDF schedule before the rest is used
-# as raw OTP record material. The schedule needs >= 32 bytes (SHA-256).
+# Bytes of the QKD key reserved for the HKDF schedule. The schedule needs >= 32
+# bytes (SHA-256).
 _SCHEDULE_BYTES = 32
+
+# After the schedule slice we reserve two 16-byte one-time masks -- one per
+# direction -- for the Wegman-Carter Finished tags. These bytes are *not*
+# reused as OTP record material; cross-use would break the WC one-time mask
+# guarantee. Layout of the QKD key consumed by a connection:
+#
+#   [0 .. _SCHEDULE_BYTES)                         HKDF schedule seed
+#   [_SCHEDULE_BYTES .. _SCHEDULE_BYTES+16)        WC Finished mask c2s
+#   [_SCHEDULE_BYTES+16 .. _SCHEDULE_BYTES+32)     WC Finished mask s2c
+#   [_SCHEDULE_BYTES+32 ..)                        OTP record material
+_WC_FINISHED_MASK_BYTES = 16
+_FINISHED_RESERVED = 2 * _WC_FINISHED_MASK_BYTES
+_OTP_OFFSET = _SCHEDULE_BYTES + _FINISHED_RESERVED
+
+
+def _finished_masks(qkd_key: bytes) -> tuple[bytes, bytes]:
+    """Slice the c2s and s2c Wegman-Carter Finished masks out of the QKD key."""
+    start = _SCHEDULE_BYTES
+    mid = start + _WC_FINISHED_MASK_BYTES
+    end = mid + _WC_FINISHED_MASK_BYTES
+    return qkd_key[start:mid], qkd_key[mid:end]
 
 
 def _split_streams(otp_material: bytes) -> tuple[OTPKeyStream, OTPKeyStream]:
@@ -133,7 +163,7 @@ def _build_protectors(
     vice versa).
     """
     schedule = KeySchedule(qkd_key, transcript)
-    otp_material = qkd_key[_SCHEDULE_BYTES:]
+    otp_material = qkd_key[_OTP_OFFSET:]
     if len(otp_material) < 2:
         raise HandshakeError("QKD key too short to carry record key material")
 
@@ -149,15 +179,53 @@ def _build_protectors(
     return s2c, c2s      # server sends on s2c, receives on c2s
 
 
-def _finished_value(qkd_key: bytes, transcript: bytes, label: str) -> str:
+def _finished_mac(qkd_key: bytes, transcript: bytes, label: str) -> WegmanCarterMAC:
+    """Build the Wegman-Carter MAC instance used for the Finished of one side.
+
+    ``label`` is "client" or "server"; the hash key ``k_H`` is derived from
+    the corresponding handshake traffic secret via HKDF-Expand-Label. The
+    per-direction one-time mask ``r`` is *not* derived here -- it is sliced
+    from the QKD key by :func:`_finished_masks` and supplied at tag/verify
+    time, so the mask is genuinely one-time and disjoint from the OTP record
+    material.
+    """
     schedule = KeySchedule(qkd_key, transcript)
     secret = (
         schedule.client_handshake_secret()
         if label == "client"
         else schedule.server_handshake_secret()
     )
-    fk = KeySchedule.finished_key(secret)
-    return hmac.new(fk, transcript, "sha256").hexdigest()
+    k_h_bytes = KeySchedule.finished_wc_key(secret)
+    return WegmanCarterMAC(WegmanCarterMAC.key_from_bytes(k_h_bytes))
+
+
+def _finished_value(qkd_key: bytes, transcript: bytes, label: str) -> str:
+    """Compute the Finished verify_data: Wegman-Carter tag over the transcript.
+
+    The mask ``r`` is drawn from the QKD key's dedicated Finished slice (one
+    16-byte mask per direction). Because the slice is never used as OTP record
+    material and the QKD key as a whole is delivered only to the two
+    legitimate peers, the mask is a true one-time pad and the tag is
+    information-theoretically secure.
+    """
+    r_c2s, r_s2c = _finished_masks(qkd_key)
+    r = r_c2s if label == "client" else r_s2c
+    mac = _finished_mac(qkd_key, transcript, label)
+    return mac.tag(transcript, r).hex()
+
+
+def _finished_verify(
+    qkd_key: bytes, transcript: bytes, label: str, received_hex: str
+) -> bool:
+    """Verify the Finished tag the peer sent for ``label`` ("client"|"server")."""
+    r_c2s, r_s2c = _finished_masks(qkd_key)
+    r = r_c2s if label == "client" else r_s2c
+    mac = _finished_mac(qkd_key, transcript, label)
+    try:
+        received = bytes.fromhex(received_hex)
+    except ValueError:
+        return False
+    return mac.verify(transcript, r, received)
 
 
 async def connect(
@@ -199,8 +267,7 @@ async def connect(
         Finished(_finished_value(qkd_key, transcript, "client")).encode()
     )
     server_fin = Finished.decode(await conn._read_frame())
-    expected = _finished_value(qkd_key, transcript, "server")
-    if not hmac.compare_digest(server_fin.verify_data, expected):
+    if not _finished_verify(qkd_key, transcript, "server", server_fin.verify_data):
         raise HandshakeError(
             "server Finished did not verify: peer does not hold the same "
             "QKD key, or the handshake was tampered with"
@@ -243,8 +310,7 @@ async def accept(
 
     # Verify the client's Finished, then send ours.
     client_fin = Finished.decode(await conn._read_frame())
-    expected = _finished_value(qkd_key, transcript, "client")
-    if not hmac.compare_digest(client_fin.verify_data, expected):
+    if not _finished_verify(qkd_key, transcript, "client", client_fin.verify_data):
         raise HandshakeError(
             "client Finished did not verify: peer does not hold the same "
             "QKD key, or the handshake was tampered with"
