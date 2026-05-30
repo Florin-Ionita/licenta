@@ -56,7 +56,14 @@
       "Bash(where typst *)",
       "Bash(python -m pytest tests/ -x)",
       "Bash(python -m pytest tests/)",
-      "Bash(grep -rn '\\\\$ ' /home/florin/licenta/thesis/thesis/chapters/)"
+      "Bash(grep -rn '\\\\$ ' /home/florin/licenta/thesis/thesis/chapters/)",
+      "Read(//home/florin/.claude/skills/humanizer/**)",
+      "Read(//home/florin/.claude/**)",
+      "Skill(humanizer)",
+      "Skill(humanizer:*)",
+      "Bash(typst --version)",
+      "Bash(echo \"exit: $?\")",
+      "Bash(pdfinfo /tmp/bg_full.pdf)"
     ],
     "additionalDirectories": [
       "/tmp"

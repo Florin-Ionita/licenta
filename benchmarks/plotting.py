@@ -129,6 +129,100 @@ def throughput_bars(summary: dict) -> Path:
     return _save(fig, "03_throughput_bars")
 
 
+def keyexchange_latency_bars(summary: dict) -> Path:
+    """Key-establishment primitive latency: QKD fetch vs X25519 vs ML-KEM-768.
+
+    A single linear-y bar chart of median latency with p95 error bars. The
+    three primitives live within one decade (~180-720 us), so one axis is
+    honest here -- unlike the handshake/throughput plots that needed split
+    panels.
+
+    IMPORTANT (and stated in the title so a reader can't miss it): these are
+    *primitive* costs, comparable to each other but NOT to the full-handshake
+    numbers in the handshake plot. ML-KEM is the standalone KEM, not a TLS
+    handshake (the test host's OpenSSL 3.0 cannot negotiate ML-KEM in TLS).
+    """
+    order = ["qkd_fetch", "x25519", "mlkem768"]
+    labels = {"qkd_fetch": "QKD fetch<br>(KME key_ID)",
+              "x25519": "X25519<br>(ECDHE)",
+              "mlkem768": "ML-KEM-768<br>(KEM)"}
+    colors = {"qkd_fetch": "#ff7f0e", "x25519": "#888888", "mlkem768": "#2ca02c"}
+
+    xs, meds, errs, present = [], [], [], []
+    for k in order:
+        s = summary.get(k)
+        if not s:
+            continue
+        present.append(k)
+        xs.append(labels[k])
+        meds.append(s["median_us"])
+        errs.append(max(0.0, s["p95_us"] - s["median_us"]))
+
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        x=xs, y=meds,
+        marker_color=[colors[k] for k in present],
+        error_y=dict(type="data", array=errs, visible=True, color="#bbb"),
+        text=[f"{m:.0f} us" for m in meds], textposition="outside",
+        hovertemplate="%{x}<br>median %{y:.1f} us<extra></extra>",
+        showlegend=False,
+    ))
+    fig.update_layout(
+        template=_TEMPLATE,
+        title="Key-establishment primitive latency "
+              "(median, p95 error bars; primitive cost, not a TLS handshake)",
+        yaxis_title="microseconds (lower is faster)",
+        xaxis_title="key-establishment approach",
+        height=520,
+    )
+    return _save(fig, "07_keyexchange_latency")
+
+
+def keyexchange_wire_bars(summary: dict) -> Path:
+    """Bytes on the wire to establish one key: QKD vs X25519 vs ML-KEM-768.
+
+    Log y-axis: the values span 16 B to 2272 B, two orders of magnitude, so a
+    linear axis would crush QKD and X25519 to invisible slivers next to
+    ML-KEM. This is the plot where QKD's advantage is structural and exact --
+    only a 16-byte key_ID crosses the wire; the key material never does.
+    """
+    wire = summary.get("wire_bytes", {})
+    order = ["qkd_fetch", "x25519", "mlkem768"]
+    labels = {"qkd_fetch": "QKD<br>(key_ID)",
+              "x25519": "X25519",
+              "mlkem768": "ML-KEM-768"}
+    colors = {"qkd_fetch": "#ff7f0e", "x25519": "#888888", "mlkem768": "#2ca02c"}
+
+    xs, totals, present = [], [], []
+    for k in order:
+        v = wire.get(k)
+        if not v:
+            continue
+        # v may be a (offer, response, note) tuple or list after JSON round-trip.
+        offer, response = int(v[0]), int(v[1])
+        present.append(k)
+        xs.append(labels[k])
+        totals.append(offer + response)
+
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        x=xs, y=totals,
+        marker_color=[colors[k] for k in present],
+        text=[f"{t} B" for t in totals], textposition="outside",
+        hovertemplate="%{x}<br>%{y} bytes total<extra></extra>",
+        showlegend=False,
+    ))
+    fig.update_layout(
+        template=_TEMPLATE,
+        title="Bytes on the wire to establish one shared key (log scale)",
+        yaxis_title="total bytes exchanged (log)",
+        yaxis_type="log",
+        xaxis_title="key-establishment approach",
+        height=520,
+    )
+    return _save(fig, "08_keyexchange_wire")
+
+
 def pool_drain_plot(result: dict) -> Path:
     samples = result["samples"]
     ts = [r[0] for r in samples]

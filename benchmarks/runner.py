@@ -22,8 +22,8 @@ import time
 import traceback
 from typing import Any, Awaitable, Callable
 
-from benchmarks import handshake, key_consumption, pool_drain, plotting, \
-    qber_sweep, throughput
+from benchmarks import handshake, key_consumption, keyexchange, pool_drain, \
+    plotting, qber_sweep, throughput
 from benchmarks.common import PROFILES, RAW_DIR
 
 
@@ -31,6 +31,7 @@ BenchFn = Callable[[Any], Awaitable[dict]]
 
 BENCHES: dict[str, tuple[BenchFn, Callable[[dict], Any] | None]] = {
     "handshake":       (handshake.run,        None),
+    "keyexchange":     (keyexchange.run,      None),
     "throughput":      (throughput.run,       None),
     "pool_drain":      (pool_drain.run,       None),
     "key_consumption": (key_consumption.run,  None),
@@ -39,6 +40,8 @@ BENCHES: dict[str, tuple[BenchFn, Callable[[dict], Any] | None]] = {
 
 PLOTS: dict[str, list[Callable[[dict], Any]]] = {
     "handshake":       [plotting.latency_histogram, plotting.latency_summary_table],
+    "keyexchange":     [plotting.keyexchange_latency_bars,
+                        plotting.keyexchange_wire_bars],
     "throughput":      [plotting.throughput_bars],
     "pool_drain":      [plotting.pool_drain_plot],
     "key_consumption": [plotting.key_consumption_plot],

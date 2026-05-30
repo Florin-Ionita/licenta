@@ -1,0 +1,4 @@
+approach,offer_bytes,response_bytes,total_bytes,note
+qkd_fetch,16,0,16,key_ID (UUID); key material never transmitted
+x25519,32,32,64,client + server ephemeral public keys
+mlkem768,1184,1088,2272,public key (offer) + ciphertext (response)
