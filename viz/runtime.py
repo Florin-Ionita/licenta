@@ -44,6 +44,7 @@ from viz.bus import EventBus
 VIZ_KEY_RATE_BPS = 32_768
 VIZ_QBER = 0.02
 VIZ_BB84_QUBITS = 32           # per-round, drives the photon panel cadence
+_QBER_WINDOW = 15              # rounds averaged for the reported QBER
 VIZ_BB84_TARGET_SIFTED = 512   # bits per emitted KeyBlock from the BB84 source
 
 
@@ -207,6 +208,7 @@ async def _instrumented_bb84_source(
     """
     alice_buf: list[int] = []
     bob_buf: list[int] = []
+    qber_window: list[float] = []
     qber_running = 0.0
     rounds_accum = 0
 
@@ -218,7 +220,10 @@ async def _instrumented_bb84_source(
             await asyncio.sleep(delay)
         eve = eve_flag()
         try:
-            r = await asyncio.to_thread(bb84_round, VIZ_BB84_QUBITS, eve, 0.0)
+            # VIZ_QBER models baseline channel noise (detector imperfections,
+            # fibre): a real link shows a non-zero QBER even with no attacker.
+            # Eve's intercept-resend then stacks ~25% on top of this floor.
+            r = await asyncio.to_thread(bb84_round, VIZ_BB84_QUBITS, eve, VIZ_QBER)
         except Exception as exc:
             bus.publish("log", level="error", msg=f"bb84 round failed: {exc!r}")
             await asyncio.sleep(0.5)
@@ -241,7 +246,12 @@ async def _instrumented_bb84_source(
         bob_buf.extend(r.bob_sifted)
         rounds_accum += 1
         if r.sifted_length:
-            qber_running = r.observed_qber()
+            # A single 32-qubit round has ~16 sifted bits, so its QBER jumps
+            # between 0% and ~10%. Report the mean over a sliding window of
+            # recent rounds instead, which tracks the true channel QBER.
+            qber_window.append(r.observed_qber())
+            del qber_window[:-_QBER_WINDOW]
+            qber_running = sum(qber_window) / len(qber_window)
             bus.update_counter("qber_last", qber_running)
 
         # Once we have enough sifted bits, distil one KeyBlock and feed the queue.

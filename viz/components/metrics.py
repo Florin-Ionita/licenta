@@ -16,7 +16,7 @@ from plotly.subplots import make_subplots
 from viz.bus import EventBus
 
 
-def build_timeseries(bus: EventBus) -> go.Figure:
+def build_timeseries(bus: EventBus, height: int = 300) -> go.Figure:
     pool_events = bus.snapshot("pool", limit=400)
     key_events = bus.snapshot("key_block", limit=400)
 
@@ -37,12 +37,18 @@ def build_timeseries(bus: EventBus) -> go.Figure:
         rate_values.append(bytes_in_window / window_s)
         rate_times.append(ev.ts - ts0)
 
+    # KME-A and KME-B pools grow in lockstep (same feeder), so the two lines
+    # sit on top of each other. Distinct dash patterns + a tiny vertical nudge
+    # on B keep both visible without misrepresenting the data.
     fig = make_subplots(specs=[[{"secondary_y": True}]])
     fig.add_trace(go.Scatter(x=pool_times, y=pool_a, mode="lines",
-                             name="KME-A fresh keys", line=dict(color="#1f77b4")),
+                             name="KME-A fresh keys",
+                             line=dict(color="#1f77b4", width=3, dash="solid")),
                   secondary_y=False)
-    fig.add_trace(go.Scatter(x=pool_times, y=pool_b, mode="lines",
-                             name="KME-B fresh keys", line=dict(color="#9467bd")),
+    pool_b_shown = [v + 0.15 for v in pool_b]  # cosmetic nudge so B clears A
+    fig.add_trace(go.Scatter(x=pool_times, y=pool_b_shown, mode="lines",
+                             name="KME-B fresh keys",
+                             line=dict(color="#ff7f0e", width=2, dash="dash")),
                   secondary_y=False)
     fig.add_trace(go.Scatter(x=rate_times, y=rate_values, mode="lines",
                              name="key throughput (B/s, 5s avg)",
@@ -52,7 +58,7 @@ def build_timeseries(bus: EventBus) -> go.Figure:
     fig.update_yaxes(title_text="fresh keys in pool", secondary_y=False, color="#bbb")
     fig.update_yaxes(title_text="bytes / sec", secondary_y=True, color="#bbb")
     fig.update_layout(
-        height=300, margin=dict(l=10, r=10, t=10, b=40),
+        height=height, margin=dict(l=10, r=10, t=10, b=40),
         plot_bgcolor="#0e1117", paper_bgcolor="#0e1117",
         legend=dict(orientation="h", y=1.0, x=0.0, font=dict(color="#bbb")),
     )

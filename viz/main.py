@@ -64,6 +64,25 @@ def _start_runtime() -> None:
 
 def _sidebar() -> None:
     with st.sidebar:
+        st.markdown("### Control")
+        if st.session_state.running:
+            if st.button("⏹ Stop", width="stretch"):
+                _stop_runtime()
+                st.rerun()
+        else:
+            if st.button("▶ Start", width="stretch"):
+                _start_runtime()
+                st.rerun()
+        new_eve = st.toggle("☣ Eve attack", value=st.session_state.eve,
+                            disabled=not st.session_state.running)
+        if new_eve != st.session_state.eve:
+            st.session_state.eve = new_eve
+            if st.session_state.runtime is not None:
+                st.session_state.runtime.set_eve(new_eve)
+        status = "● running" if st.session_state.running else "○ stopped"
+        st.markdown(f"**Status:** {status}")
+
+        st.markdown("---")
         st.markdown("### Display")
         st.session_state.refresh_ms = st.slider(
             "Refresh interval (ms)", 250, 5000,
@@ -98,48 +117,38 @@ def _stop_runtime() -> None:
 
 
 def _header() -> None:
-    cols = st.columns([3, 1, 1, 1, 2])
-    cols[0].markdown("### 🔐 QTLS over a simulated QKD network")
-    if cols[1].button("▶ Start", disabled=st.session_state.running, width="stretch"):
-        _start_runtime()
-    if cols[2].button("⏹ Stop", disabled=not st.session_state.running, width="stretch"):
-        _stop_runtime()
-    new_eve = cols[3].toggle("Eve attack", value=st.session_state.eve,
-                             disabled=not st.session_state.running)
-    if new_eve != st.session_state.eve:
-        st.session_state.eve = new_eve
-        if st.session_state.runtime is not None:
-            st.session_state.runtime.set_eve(new_eve)
-    status = "● running" if st.session_state.running else "○ stopped"
-    cols[4].markdown(f"**Status:** {status}")
+    st.markdown("### 🔐 QTLS over a simulated QKD network")
+
+
+_PANEL_H = 650  # px per panel: each panel fills roughly one screen height
 
 
 def _render_panels() -> None:
     bus: EventBus = st.session_state.bus
+    cfg = {"displayModeBar": False}
 
-    row1 = st.columns(2)
-    with row1[0]:
-        st.markdown("#### A) QKD network")
-        st.plotly_chart(topology.build(bus), width="stretch",
-                        config={"displayModeBar": False})
-    with row1[1]:
-        st.markdown("#### B) BB84 photon stream")
-        st.plotly_chart(photons.build(bus), width="stretch",
-                        config={"displayModeBar": False})
+    st.markdown("#### A) QKD network")
+    st.plotly_chart(topology.build(bus, height=_PANEL_H), width="stretch",
+                    config=cfg)
+    st.markdown("---")
 
-    row2 = st.columns(2)
-    with row2[0]:
-        st.markdown("#### C) QTLS handshake")
-        st.plotly_chart(handshake.build(bus), width="stretch",
-                        config={"displayModeBar": False})
-    with row2[1]:
-        st.markdown("#### D) Metrics")
-        strip = metrics.stat_strip(bus)
-        m_cols = st.columns(len(strip))
-        for col, (label, value) in zip(m_cols, strip):
-            col.metric(label, value)
-        st.plotly_chart(metrics.build_timeseries(bus), width="stretch",
-                        config={"displayModeBar": False})
+    st.markdown("#### B) BB84 photon stream")
+    st.plotly_chart(photons.build(bus, height=_PANEL_H), width="stretch",
+                    config=cfg)
+    st.markdown("---")
+
+    st.markdown("#### C) QTLS handshake")
+    st.plotly_chart(handshake.build(bus, height=_PANEL_H), width="stretch",
+                    config=cfg)
+    st.markdown("---")
+
+    st.markdown("#### D) Metrics")
+    strip = metrics.stat_strip(bus)
+    m_cols = st.columns(len(strip))
+    for col, (label, value) in zip(m_cols, strip):
+        col.metric(label, value)
+    st.plotly_chart(metrics.build_timeseries(bus, height=_PANEL_H - 120),
+                    width="stretch", config=cfg)
 
     with st.expander("Event log"):
         log_events = bus.snapshot("log", limit=50)

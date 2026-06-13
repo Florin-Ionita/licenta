@@ -23,7 +23,7 @@ _BIT_COLOR = {0: "#1f77b4", 1: "#ff7f0e"}
 _BASIS_SYMBOL = {0: "circle", 1: "diamond"}   # Z, X
 
 
-def build(bus: EventBus) -> go.Figure:
+def build(bus: EventBus, height: int = 260) -> go.Figure:
     rounds = bus.snapshot("photon_round", limit=1)
     fig = go.Figure()
     fig.add_shape(
@@ -38,7 +38,7 @@ def build(bus: EventBus) -> go.Figure:
         fig.update_layout(
             xaxis=dict(visible=False, range=[0, 1]),
             yaxis=dict(visible=False, range=[0, 1]),
-            height=260, margin=dict(l=10, r=10, t=10, b=10),
+            height=height, margin=dict(l=10, r=10, t=10, b=10),
             plot_bgcolor="#0e1117", paper_bgcolor="#0e1117",
         )
         return fig
@@ -87,20 +87,35 @@ def build(bus: EventBus) -> go.Figure:
         )
     if r["eve_present"]:
         fig.add_annotation(
-            x=0.5, y=0.5, text="Eve",
-            font=dict(color="#d62728", size=14),
+            x=0.5, y=0.5, text="⚠ Eve",
+            font=dict(color="#d62728", size=18),
             showarrow=False, bgcolor="#0e1117",
         )
 
     fig.update_layout(
         xaxis=dict(visible=False, range=[0, 1]),
         yaxis=dict(visible=False, range=[0, 1]),
-        height=260, margin=dict(l=10, r=10, t=10, b=10),
-        legend=dict(orientation="h", y=1.0, x=0.0, font=dict(color="#bbb")),
+        height=height, margin=dict(l=70, r=10, t=10, b=40),
+        showlegend=False,
         plot_bgcolor="#0e1117", paper_bgcolor="#0e1117",
         annotations=list(fig.layout.annotations) + [
-            dict(x=0.0, y=0.92, text=f"sifted: {len(sifted)}/{n}  observed QBER: {r['observed_qber']:.1%}",
-                 showarrow=False, font=dict(color="#bbb"), xanchor="left"),
+            # Row labels (kept inside the [0,1] plot area).
+            dict(x=0.01, y=0.88, text="Alice (prepares)", showarrow=False,
+                 xanchor="left", font=dict(color="#bbb", size=16)),
+            dict(x=0.01, y=0.12, text="Bob (measures)", showarrow=False,
+                 xanchor="left", font=dict(color="#bbb", size=16)),
+            # Big sifted / QBER readout, top-left inside the plot.
+            dict(x=0.01, y=0.99, xanchor="left", showarrow=False,
+                 text=f"sifted {len(sifted)}/{n}   QBER {r['observed_qber']:.1%}",
+                 font=dict(color="#7fd97f", size=22)),
+            # Encoding legend, bottom of the plot. Colour words are coloured
+            # via Plotly's <span> (no inline CSS style attr, which it ignores).
+            dict(x=0.5, y=0.50, xanchor="center", showarrow=False,
+                 text="circle = Z basis    diamond = X basis    "
+                      "<span style=\"color:#1f77b4\">blue = bit 0</span>    "
+                      "<span style=\"color:#ff7f0e\">orange = bit 1</span>    "
+                      "white ring = sifted",
+                 font=dict(color="#bbb", size=15), bgcolor="rgba(14,17,23,0.7)"),
         ],
     )
     return fig
