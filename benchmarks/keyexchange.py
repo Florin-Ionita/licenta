@@ -119,11 +119,18 @@ def _bench_mlkem768(iters: int, warmup: int) -> PrimReport:
 # -- QKD fetch: master SAE pulls one key from its KME by key_ID ------------
 
 
+# Keep the live KME pool small and realistic instead of prefilling one key per
+# iteration. A 20k-key pool both inflates each take_keys() scan and adds GC
+# pressure, neither of which reflects a real KME holding hundreds of keys.
+_POOL_TARGET = 512
+_POOL_LOWATER = 128
+
+
 async def _bench_qkd_fetch(iters: int, warmup: int) -> PrimReport:
-    # Each fetch consumes one KME key; prefill enough for warmup + measure.
-    needed = iters + warmup + 32
+    # Each fetch consumes one KME key; hold the pool near _POOL_TARGET by
+    # refilling when it drains.
     samples: list[int] = []
-    async with _BenchStack(prefill_blocks=needed) as stack:
+    async with _BenchStack(prefill_blocks=_POOL_TARGET) as stack:
         client = stack.kme_client(stack.kme_a, stack.client_sae)
 
         async def one() -> None:
@@ -133,8 +140,12 @@ async def _bench_qkd_fetch(iters: int, warmup: int) -> PrimReport:
             await client.request_key(stack.server_sae)
 
         for _ in range(warmup):
+            if stack.fresh_count() < _POOL_LOWATER:
+                stack.refill(_POOL_TARGET - stack.fresh_count())
             await one()
         for _ in range(iters):
+            if stack.fresh_count() < _POOL_LOWATER:
+                stack.refill(_POOL_TARGET - stack.fresh_count())
             t0 = time.perf_counter_ns()
             await one()
             samples.append(time.perf_counter_ns() - t0)

@@ -72,6 +72,22 @@ PROFILES = {
                            0.05, 0.07, 0.08, 0.10],
         keyconsumption_payloads=[16, 64, 256, 1024, 4096, 16384],
     ),
+    # Same wall-clock-bound benches as `full` (qber_sweep / pool_drain pace
+    # themselves at 1 block/sec, so lengthening them buys nothing), but the
+    # CPU-bound latency benches get many more iterations for tighter
+    # percentiles. Designed to be run with the parallel runner (--jobs), which
+    # spreads the independent benches across cores so the extra handshake
+    # iterations finish inside roughly the same wall-clock as plain `full`.
+    "full-fast": BenchConfig(
+        name="full-fast",
+        handshake_iters=20000, handshake_warmup=1000,
+        throughput_bytes=[1 << 20, 1 << 23, 1 << 26],   # 1 MB, 8 MB, 64 MB
+        pool_drain_seconds=180.0,
+        qber_sweep_seconds=120.0,
+        qber_sweep_values=[0.005, 0.01, 0.015, 0.02, 0.025, 0.03, 0.04,
+                           0.05, 0.07, 0.08, 0.10],
+        keyconsumption_payloads=[16, 64, 256, 1024, 4096, 16384],
+    ),
     "extreme": BenchConfig(
         name="extreme",
         handshake_iters=20000, handshake_warmup=1000,
@@ -123,25 +139,21 @@ class _BenchStack:
     _queue: "asyncio.Queue[KeyBlock] | None" = None
 
     async def __aenter__(self) -> "_BenchStack":
-        self.kme_a, self.kme_b = make_kme_pair(key_size_bits=self.key_size_bits)
+        # Keep the live pool small. A huge prefill (e.g. one block per
+        # iteration for a 20k-iteration bench) is both unrealistic -- a real
+        # KME holds tens to hundreds of keys, not tens of thousands -- and
+        # actively distorts the measurement: take_keys() scans+sorts the whole
+        # undelivered pool per fetch, and 20k live KeyBlock objects create GC
+        # pressure that injects multi-second tail latencies. Long benches
+        # should instead start small and call refill() to top the pool up as
+        # they drain it, keeping the steady-state pool size realistic.
+        max_keys = max(10_000, self.prefill_blocks + 1024)
+        self.kme_a, self.kme_b = make_kme_pair(
+            key_size_bits=self.key_size_bits, max_key_count=max_keys)
         self.kme_a.authorise(self.client_sae, self.server_sae)
         self.kme_b.authorise(self.client_sae, self.server_sae)
 
-        # Synchronous prefill. We deliberately *skip* the Cascade
-        # reconciliation pipeline here: it is O(n*passes) and the largest
-        # benches need megabytes of key material, which would take minutes
-        # just to prime the stack. The reconciliation correctness is already
-        # exercised by the Phase 1-2 unit tests; what the bench needs is
-        # cryptographically-strong, byte-identical key blocks on both sides,
-        # which token_bytes() provides directly.
-        import secrets
-        from qkd.keyblock import KeyBlock
-        key_bytes = self.key_size_bits // 8
-        for _ in range(self.prefill_blocks):
-            blk = KeyBlock(material=secrets.token_bytes(key_bytes),
-                           source="abstract-bulk", qber=self.qber)
-            self.kme_a.add_block(blk)
-            self.kme_b.add_block(blk)
+        self.refill(self.prefill_blocks)
 
         if self.feed_in_background:
             self._stop = asyncio.Event()
@@ -167,14 +179,51 @@ class _BenchStack:
             with contextlib.suppress(Exception):
                 await h.aclose()
 
-    def kme_client(self, store: KeyStore, sae: str) -> KMEClient:
+    def kme_client(self, store: KeyStore, sae: str,
+                   track: bool = True) -> KMEClient:
+        """Build a KMEClient over an in-process ASGI transport.
+
+        When ``track`` is True the underlying httpx client is registered for
+        close at stack teardown -- fine for benches that open one client and
+        keep it for the whole run. Per-handshake callers (open_qtls_pair) pass
+        ``track=False`` and close the client themselves immediately after the
+        handshake: otherwise a 20k-iteration bench accumulates 40k live httpx
+        clients + ASGI apps, which exhausts resources and eventually stalls.
+        """
         app = create_kme_app(store, peer_kme_id="peer")
         http = httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app),
             base_url="http://kme.local",
         )
-        self._http.append(http)
+        if track:
+            self._http.append(http)
         return KMEClient(http, sae)
+
+    def refill(self, n: int) -> None:
+        """Inject ``n`` fresh, byte-identical key blocks into both KMEs.
+
+        We deliberately *skip* the Cascade reconciliation pipeline here: it is
+        O(n*passes) and the largest benches need lots of key material, which
+        would take minutes just to prime the stack. Reconciliation correctness
+        is exercised by the Phase 1-2 unit tests; what the bench needs is
+        cryptographically-strong, byte-identical blocks on both sides, which
+        token_bytes() provides directly.
+
+        Long benches call this periodically so the live pool stays small (and
+        realistic) instead of prefilling one block per iteration up front.
+        """
+        import secrets
+        from qkd.keyblock import KeyBlock
+        key_bytes = self.key_size_bits // 8
+        for _ in range(n):
+            blk = KeyBlock(material=secrets.token_bytes(key_bytes),
+                           source="abstract-bulk", qber=self.qber)
+            self.kme_a.add_block(blk)
+            self.kme_b.add_block(blk)
+
+    def fresh_count(self) -> int:
+        """Fresh (undelivered) keys currently in KME-A's pool."""
+        return self.kme_a.fresh_key_count() if self.kme_a else 0
 
 
 async def open_qtls_pair(
@@ -185,14 +234,17 @@ async def open_qtls_pair(
     Returns (client_conn, server_conn, server_object). Caller owns shutdown.
     """
     accepted: asyncio.Future[QTLSConnection] = asyncio.get_event_loop().create_future()
+    # KMEClient is used only during the handshake (request_key / fetch_key),
+    # never after. Track the per-handshake clients here and close them before
+    # returning, so a long bench does not leak one httpx client + ASGI app per
+    # iteration (the cause of the 20k-iteration stall).
+    ephemeral: list[KMEClient] = []
 
     async def handler(reader, writer):
         try:
-            conn = await accept(
-                reader, writer,
-                stack.kme_client(stack.kme_b, stack.server_sae),
-                stack.server_sae,
-            )
+            kc = stack.kme_client(stack.kme_b, stack.server_sae, track=False)
+            ephemeral.append(kc)
+            conn = await accept(reader, writer, kc, stack.server_sae)
             accepted.set_result(conn)
         except Exception as exc:
             if not accepted.done():
@@ -202,12 +254,16 @@ async def open_qtls_pair(
     port = server.sockets[0].getsockname()[1]
 
     reader, writer = await asyncio.open_connection("127.0.0.1", port)
+    client_kc = stack.kme_client(stack.kme_a, stack.client_sae, track=False)
+    ephemeral.append(client_kc)
     client_conn = await connect(
-        reader, writer,
-        stack.kme_client(stack.kme_a, stack.client_sae),
-        stack.client_sae, stack.server_sae,
+        reader, writer, client_kc, stack.client_sae, stack.server_sae,
     )
     server_conn = await asyncio.wait_for(accepted, timeout=10.0)
+
+    for kc in ephemeral:
+        with contextlib.suppress(Exception):
+            await kc._http.aclose()
     return client_conn, server_conn, server
 
 

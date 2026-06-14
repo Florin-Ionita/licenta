@@ -63,10 +63,22 @@
       "Skill(humanizer:*)",
       "Bash(typst --version)",
       "Bash(echo \"exit: $?\")",
-      "Bash(pdfinfo /tmp/bg_full.pdf)"
+      "Bash(pdfinfo /tmp/bg_full.pdf)",
+      "PowerShell(python -m benchmarks.runner --profile lite)",
+      "PowerShell(& 'C:\\\\msys64\\\\ucrt64\\\\bin\\\\gcc.EXE' -O3 -shared -fPIC -std=c99 -o 'C:\\\\licenta\\\\licenta\\\\qkd\\\\libcascade.dll' 'C:\\\\licenta\\\\licenta\\\\qkd\\\\_cascade.c'; \"exit code: $LASTEXITCODE\")",
+      "PowerShell(cmd /c '\"C:\\\\msys64\\\\ucrt64\\\\bin\\\\gcc.EXE\" -O3 -shared -fPIC -std=c99 -o \"C:\\\\licenta\\\\licenta\\\\qkd\\\\libcascade.dll\" \"C:\\\\licenta\\\\licenta\\\\qkd\\\\_cascade.c\" > C:\\\\licenta\\\\licenta\\\\gcc_err.txt 2>&1'; \"done: $LASTEXITCODE\")",
+      "PowerShell(cmd /c '\"C:\\\\msys64\\\\ucrt64\\\\bin\\\\gcc.EXE\" --version > C:\\\\licenta\\\\licenta\\\\gcc_ver.txt 2>&1'; \"exit: $LASTEXITCODE\"; Get-Content C:\\\\licenta\\\\licenta\\\\gcc_ver.txt)",
+      "PowerShell(cmd /c '\"C:\\\\msys64\\\\ucrt64\\\\bin\\\\gcc.EXE\" -O3 -shared -fPIC -std=c99 -o \"C:\\\\licenta\\\\licenta\\\\qkd\\\\libcascade_test.dll\" \"C:\\\\licenta\\\\licenta\\\\qkd\\\\_cascade.c\" > C:\\\\licenta\\\\licenta\\\\gcc_err2.txt 2>&1'; \"exit: $LASTEXITCODE\"; Get-Content C:\\\\licenta\\\\licenta\\\\gcc_err2.txt)",
+      "Read(//c/licenta/licenta/qkd/**)",
+      "PowerShell(\"Logical CPUs: $env:NUMBER_OF_PROCESSORS\"; Get-CimInstance Win32_Processor | Select-Object Name,NumberOfCores,NumberOfLogicalProcessors | Format-List)",
+      "PowerShell(\"cleaned\")",
+      "PowerShell(python C:\\\\licenta\\\\licenta\\\\_check_tmp.py)",
+      "PowerShell(Get-Process python -ErrorAction SilentlyContinue | Select-Object Id,StartTime,@{N='CPU_s';E={[math]::Round\\($_.CPU\\)}},@{N='WS_MB';E={[math]::Round\\($_.WorkingSet64/1MB\\)}})",
+      "PowerShell(Get-Process python -ErrorAction SilentlyContinue | Select-Object Id,StartTime,@{N='ageMin';E={[math]::Round\\(\\(\\(Get-Date\\)-$_.StartTime\\).TotalMinutes,1\\)}},@{N='CPU_s';E={[math]::Round\\($_.CPU\\)}},@{N='WS_MB';E={[math]::Round\\($_.WorkingSet64/1MB\\)}} | Sort-Object StartTime)"
     ],
     "additionalDirectories": [
-      "/tmp"
+      "/tmp",
+      "C:\\licenta\\licenta"
     ]
   }
 }

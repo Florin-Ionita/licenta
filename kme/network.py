@@ -21,10 +21,13 @@ def make_kme_pair(
     kme_a_id: str = "KME-A",
     kme_b_id: str = "KME-B",
     key_size_bits: int = 256,
+    max_key_count: int = 10_000,
 ) -> tuple[KeyStore, KeyStore]:
     """Create two empty, mutually-aware KME key stores."""
-    a = KeyStore(kme_id=kme_a_id, key_size_bits=key_size_bits)
-    b = KeyStore(kme_id=kme_b_id, key_size_bits=key_size_bits)
+    a = KeyStore(kme_id=kme_a_id, key_size_bits=key_size_bits,
+                 max_key_count=max_key_count)
+    b = KeyStore(kme_id=kme_b_id, key_size_bits=key_size_bits,
+                 max_key_count=max_key_count)
     # Link the pair so a reservation on one side is mirrored to the other
     # (the simulated ETSI KME-to-KME synchronisation channel).
     a.link_peer(b)

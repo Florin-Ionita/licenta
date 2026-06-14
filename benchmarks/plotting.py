@@ -15,7 +15,7 @@ from plotly.subplots import make_subplots
 
 from benchmarks.common import PLOT_DIR
 
-_TEMPLATE = "plotly_dark"
+_TEMPLATE = "plotly_white"
 
 
 def _save(fig: go.Figure, name: str) -> Path:
@@ -75,9 +75,11 @@ def latency_summary_table(stats: dict) -> Path:
                      f"{s['p99_ms']:.3f}", f"{s['min_ms']:.3f}",
                      f"{s['max_ms']:.3f}"])
     fig = go.Figure(data=[go.Table(
-        header=dict(values=rows[0], fill_color="#222", font=dict(color="white")),
+        header=dict(values=rows[0], fill_color="#1f77b4",
+                    font=dict(color="white"), align="left"),
         cells=dict(values=list(zip(*rows[1:])),
-                   fill_color="#0e1117", font=dict(color="white")),
+                   fill_color=["#f2f6fa", "white"], font=dict(color="#111"),
+                   align="left"),
     )])
     fig.update_layout(template=_TEMPLATE, title="Handshake latency summary")
     return _save(fig, "02_handshake_latency_table")
@@ -223,23 +225,51 @@ def keyexchange_wire_bars(summary: dict) -> Path:
     return _save(fig, "08_keyexchange_wire")
 
 
+# Pool-drain runs for the full profile duration (up to 600 s), which packs
+# hundreds of identical drain/refill cycles into the figure -- a dense "forest"
+# of vertical spikes that dominates the page without adding information. We
+# render only the opening window: a handful of cycles is enough to show the
+# steady-state behaviour, and an annotation states that the pattern repeats
+# unchanged for the rest of the run.
+_POOL_DRAIN_WINDOW_S = 60.0
+
+
 def pool_drain_plot(result: dict) -> Path:
-    samples = result["samples"]
+    all_samples = result["samples"]
+    total_s = all_samples[-1][0] if all_samples else 0.0
+    # Zoom to the opening window so individual cycles are legible. If the run is
+    # already short (e.g. the lite profile), just show all of it.
+    samples = [r for r in all_samples if r[0] <= _POOL_DRAIN_WINDOW_S] \
+        if total_s > _POOL_DRAIN_WINDOW_S else all_samples
+    windowed = total_s > _POOL_DRAIN_WINDOW_S
     ts = [r[0] for r in samples]
+    # KME-A and KME-B are fed by a symmetric fan-out, so their fresh-key pool
+    # depths are identical at every sample. Drawing them naively makes the
+    # second trace sit exactly on top of the first, hiding it. We draw KME-B as
+    # a thick solid baseline and KME-A as a thinner dashed line on top, so both
+    # are visible *and* the reader can see they coincide by design.
     fig = make_subplots(specs=[[{"secondary_y": True}]])
-    fig.add_trace(go.Scatter(x=ts, y=[r[1] for r in samples],
-                             mode="lines", name="KME-A fresh"),
-                  secondary_y=False)
     fig.add_trace(go.Scatter(x=ts, y=[r[2] for r in samples],
-                             mode="lines", name="KME-B fresh"),
+                             mode="lines", name="KME-B fresh",
+                             line=dict(color="#1f77b4", width=3)),
+                  secondary_y=False)
+    fig.add_trace(go.Scatter(x=ts, y=[r[1] for r in samples],
+                             mode="lines", name="KME-A fresh (overlaps B)",
+                             line=dict(color="#2ca02c", width=1.5, dash="dash")),
                   secondary_y=False)
     fig.add_trace(go.Scatter(x=ts, y=[r[5] / 1024 for r in samples],
                              mode="lines", name="cumulative KiB sent",
                              line=dict(dash="dot", color="#ff7f0e")),
                   secondary_y=True)
-    fig.update_layout(template=_TEMPLATE,
-                      title="Pool depth under sustained QTLS chat load",
-                      xaxis_title="seconds")
+    title = ("Pool depth under sustained QTLS chat load "
+             "(KME-A and KME-B coincide by symmetric fan-out)")
+    if windowed:
+        title += f"<br><sub>first {_POOL_DRAIN_WINDOW_S:.0f} s shown; " \
+                 f"the drain/refill cycle repeats unchanged through " \
+                 f"{total_s:.0f} s</sub>"
+    fig.update_layout(template=_TEMPLATE, title=title,
+                      xaxis_title="seconds",
+                      legend=dict(orientation="h"))
     fig.update_yaxes(title_text="fresh keys in pool", secondary_y=False)
     fig.update_yaxes(title_text="cumulative payload KiB",   secondary_y=True)
     return _save(fig, "04_pool_drain")

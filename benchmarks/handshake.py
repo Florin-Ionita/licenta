@@ -54,19 +54,32 @@ class LatencyReport:
 # -- QTLS path -------------------------------------------------------------
 
 
+# Keep the live KME pool small and realistic: start with this many keys and
+# top back up to it whenever it drops below the low-water mark. Prefilling one
+# key per iteration (20k+) is unrealistic and distorts the measurement -- the
+# oversized pool slows every take_keys() scan and its GC pressure injects
+# multi-second tail latencies into the handshake timings.
+_POOL_TARGET = 512
+_POOL_LOWATER = 128
+
+
 async def _bench_qtls(cfg: BenchConfig) -> LatencyReport:
-    # Prefill heavily so we don't run out of keys mid-benchmark.
-    # Each handshake consumes one KME key (1 KiB), so prefill = iters + warmup.
-    needed = cfg.handshake_iters + cfg.handshake_warmup + 32
+    # Each handshake consumes one KME key. Hold the pool near _POOL_TARGET by
+    # refilling when it drains, instead of one giant prefill.
     samples: list[int] = []
-    async with _BenchStack(prefill_blocks=needed) as stack:
+    async with _BenchStack(prefill_blocks=_POOL_TARGET) as stack:
         # Warmup.
         for _ in range(cfg.handshake_warmup):
+            if stack.fresh_count() < _POOL_LOWATER:
+                stack.refill(_POOL_TARGET - stack.fresh_count())
             c, s, srv = await open_qtls_pair(stack)
             await c.close(); await s.close()
             srv.close(); await srv.wait_closed()
-        # Measure.
+        # Measure. The refill check is outside the timed region so topping up
+        # the pool never counts toward a handshake's measured latency.
         for _ in range(cfg.handshake_iters):
+            if stack.fresh_count() < _POOL_LOWATER:
+                stack.refill(_POOL_TARGET - stack.fresh_count())
             t0 = time.perf_counter_ns()
             c, s, srv = await open_qtls_pair(stack)
             samples.append(time.perf_counter_ns() - t0)
