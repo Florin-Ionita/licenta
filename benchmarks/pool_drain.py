@@ -16,37 +16,126 @@ import contextlib
 import secrets
 
 from benchmarks.common import BenchConfig, _BenchStack, write_csv
-from benchmarks.throughput import _one_qtls_session
+from benchmarks.throughput import HANDSHAKE_TIMEOUT
 from qkd.keyblock import KeyBlock
+from qtls.connection import accept, connect
+
+# Paced-consumer parameters (tunable). A realistic chat sends a few small
+# messages slowly, not a saturating stream. The dominant cost is actually the
+# per-session handshake (it pulls a key), so keeping sessions long and
+# infrequent keeps consumption well below the producer's rate, letting the pool
+# fill from its small prefill up to the cap and then stay full. To rebalance:
+# raise _PACE_SECONDS / _MESSAGES_PER_SESSION (slower, fewer handshakes) to make
+# the pool fill faster; lower them to make it drain.
+_PACE_SECONDS = 0.5          # gap between messages (2 messages/s)
+_MESSAGES_PER_SESSION = 20   # long session -> few handshakes -> low key cost
+_BURST_FRACTION = 0.6        # at 60% of the run, fire one heavy burst
+_BURST_SESSIONS = 30         # burst: many back-to-back sessions, each pulls a key
+
+
+async def _paced_session(stack: _BenchStack, msg: bytes, n_messages: int,
+                         pace_s: float) -> int:
+    """Open one QTLS session and send ``n_messages`` paced chat messages.
+
+    Unlike the throughput session, which streams as fast as the OTP budget
+    allows, this sends one small message every ``pace_s`` seconds, modelling a
+    human chat rather than a saturating sender. Returns the number of bytes the
+    receiver acknowledged. Ends early if the OTP budget runs out.
+    """
+    received = 0
+    received_done = asyncio.Event()
+
+    async def server_handler(reader, writer):
+        nonlocal received
+        try:
+            conn = await asyncio.wait_for(
+                accept(reader, writer,
+                       stack.kme_client(stack.kme_b, stack.server_sae),
+                       stack.server_sae),
+                timeout=HANDSHAKE_TIMEOUT)
+        except Exception:
+            with contextlib.suppress(Exception):
+                writer.close()
+            received_done.set()
+            return
+        try:
+            while True:
+                try:
+                    data = await conn.recv()
+                except Exception:
+                    break
+                received += len(data)
+        finally:
+            with contextlib.suppress(Exception):
+                await conn.close()
+            received_done.set()
+
+    server = await asyncio.start_server(server_handler, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+    try:
+        reader, writer = await asyncio.open_connection("127.0.0.1", port)
+        client_conn = await asyncio.wait_for(
+            connect(reader, writer,
+                    stack.kme_client(stack.kme_a, stack.client_sae),
+                    stack.client_sae, stack.server_sae),
+            timeout=HANDSHAKE_TIMEOUT)
+        try:
+            for _ in range(n_messages):
+                try:
+                    await client_conn.send(msg)
+                except Exception as exc:
+                    if type(exc).__name__ == "OTPKeyExhaustedError":
+                        break
+                    raise
+                await asyncio.sleep(pace_s)
+        finally:
+            with contextlib.suppress(Exception):
+                await client_conn.close()
+    finally:
+        with contextlib.suppress(Exception):
+            server.close()
+    return received
 
 
 async def _chatter(stack: _BenchStack, payload_size: int, stop: asyncio.Event,
-                   counters: dict) -> None:
-    """Open one QTLS session after another, sending fixed-size chat messages.
-
-    Each session ends when its per-direction OTP budget is spent (the
-    record-layer raises ``OTPKeyExhaustedError`` and ``_one_qtls_session``
-    returns). The next iteration opens a fresh session, which is the realistic
-    chat-app pattern -- a long conversation comprises many short sessions.
-    """
+                   counters: dict, total_seconds: float = 0.0) -> None:
+    """Drive a realistic, paced chat: short sessions of a few small messages,
+    sent slowly enough that consumption stays below the key-generation rate.
+    Partway through the run it fires one heavy burst (an unpaced session that
+    sends many messages) so the plot also shows the pool being drawn down before
+    it refills."""
     msg = b"x" * payload_size
+    burst_at = total_seconds * _BURST_FRACTION
+    burst_done = False
+    start = time.perf_counter()
     while not stop.is_set():
-        # We don't know up-front how many bytes one session can carry; ask for
-        # a large quota and the session will return as much as it actually
-        # shipped before OTP exhaustion.
+        elapsed = time.perf_counter() - start
+        if not burst_done and total_seconds and elapsed >= burst_at:
+            # Heavy burst: many back-to-back sessions with no pacing, each one
+            # pulling a fresh key, so the pool is visibly drawn down.
+            burst_done = True
+            for _ in range(_BURST_SESSIONS):
+                if stop.is_set():
+                    break
+                try:
+                    shipped = await _paced_session(stack, msg, 4, 0.0)
+                except Exception:
+                    break
+                counters["handshakes"] += 1
+                if shipped > 0:
+                    counters["records"] += max(1, shipped // payload_size)
+                    counters["bytes"] += shipped
+            continue
         try:
-            shipped = await _one_qtls_session(stack, msg, 1 << 20)
+            shipped = await _paced_session(stack, msg, _MESSAGES_PER_SESSION,
+                                           _PACE_SECONDS)
         except Exception:
-            # Producer hasn't refilled yet, or something transient -- wait and
+            # Producer hasn't refilled yet, or something transient: wait and
             # retry rather than aborting the bench.
             await asyncio.sleep(0.1)
             continue
         counters["handshakes"] += 1
         if shipped > 0:
-            # The session shipped ``shipped`` bytes in CHUNK-sized records;
-            # we report records as ceil(shipped/payload) which matches the
-            # bench's framing intent even though _one_qtls_session uses its
-            # own CHUNK internally.
             counters["records"] += max(1, shipped // payload_size)
             counters["bytes"] += shipped
 
@@ -72,15 +161,18 @@ async def _fast_producer(stack: _BenchStack, blocks_per_sec: float,
 
 
 async def run(cfg: BenchConfig) -> dict:
-    # Tight prefill so the consumer-vs-producer race is visible from t=0.
-    # The replacement producer (below) emits N blocks/s without Cascade
-    # overhead, giving the metrics panel an honest, observable feedback loop.
-    async with _BenchStack(prefill_blocks=16) as stack:
+    # Start the pool nearly empty. The producer outpaces the paced consumer, so
+    # under the light chat load the pool simply climbs; the mid-run burst is
+    # what draws it down. The store keeps its default (large) capacity, so no
+    # artificial cap shapes the curve. The replacement producer (below) emits N
+    # blocks/s without Cascade overhead, giving an honest, observable loop.
+    async with _BenchStack(prefill_blocks=4, key_size_bits=64 * 1024) as stack:
         feeder_stop = asyncio.Event()
         feeder = asyncio.create_task(_fast_producer(stack, 4.0, feeder_stop))
         counters = {"handshakes": 0, "records": 0, "bytes": 0}
         stop = asyncio.Event()
-        chatter = asyncio.create_task(_chatter(stack, 256, stop, counters))
+        chatter = asyncio.create_task(
+            _chatter(stack, 256, stop, counters, cfg.pool_drain_seconds))
 
         rows = []
         start = time.perf_counter()

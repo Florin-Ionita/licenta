@@ -59,8 +59,7 @@ def latency_histogram(stats: dict) -> Path:
     fig.update_yaxes(title_text="count", row=1, col=1)
     fig.update_yaxes(title_text="count", row=2, col=1)
     fig.update_layout(template=_TEMPLATE, showlegend=False,
-                      title="Handshake latency distribution "
-                            "(independent x-axes; 99.5th percentile clipped)",
+                      title=None,
                       height=720)
     return _save(fig, "01_handshake_latency_histogram")
 
@@ -81,7 +80,7 @@ def latency_summary_table(stats: dict) -> Path:
                    fill_color=["#f2f6fa", "white"], font=dict(color="#111"),
                    align="left"),
     )])
-    fig.update_layout(template=_TEMPLATE, title="Handshake latency summary")
+    fig.update_layout(template=_TEMPLATE, title=None)
     return _save(fig, "02_handshake_latency_table")
 
 
@@ -126,7 +125,7 @@ def throughput_bars(summary: dict) -> Path:
                      row=2, col=1)
     fig.update_xaxes(title_text="payload size", row=2, col=1)
     fig.update_layout(template=_TEMPLATE,
-                      title="Bulk throughput (independent y-axes)",
+                      title=None,
                       height=620)
     return _save(fig, "03_throughput_bars")
 
@@ -171,8 +170,7 @@ def keyexchange_latency_bars(summary: dict) -> Path:
     ))
     fig.update_layout(
         template=_TEMPLATE,
-        title="Key-establishment primitive latency "
-              "(median, p95 error bars; primitive cost, not a TLS handshake)",
+        title=None,
         yaxis_title="microseconds (lower is faster)",
         xaxis_title="key-establishment approach",
         height=520,
@@ -216,7 +214,7 @@ def keyexchange_wire_bars(summary: dict) -> Path:
     ))
     fig.update_layout(
         template=_TEMPLATE,
-        title="Bytes on the wire to establish one shared key (log scale)",
+        title=None,
         yaxis_title="total bytes exchanged (log)",
         yaxis_type="log",
         xaxis_title="key-establishment approach",
@@ -261,13 +259,7 @@ def pool_drain_plot(result: dict) -> Path:
                              mode="lines", name="cumulative KiB sent",
                              line=dict(dash="dot", color="#ff7f0e")),
                   secondary_y=True)
-    title = ("Pool depth under sustained QTLS chat load "
-             "(KME-A and KME-B coincide by symmetric fan-out)")
-    if windowed:
-        title += f"<br><sub>first {_POOL_DRAIN_WINDOW_S:.0f} s shown; " \
-                 f"the drain/refill cycle repeats unchanged through " \
-                 f"{total_s:.0f} s</sub>"
-    fig.update_layout(template=_TEMPLATE, title=title,
+    fig.update_layout(template=_TEMPLATE, title=None,
                       xaxis_title="seconds",
                       legend=dict(orientation="h"))
     fig.update_yaxes(title_text="fresh keys in pool", secondary_y=False)
@@ -277,8 +269,15 @@ def pool_drain_plot(result: dict) -> Path:
 
 def key_consumption_plot(result: dict) -> Path:
     s = result["samples"]
+    payloads = [r["payload"] for r in s]
+
+    def _fmt(n: int) -> str:
+        if n >= 1024 and n % 1024 == 0:
+            return f"{n // 1024}k"
+        return str(n)
+
     fig = go.Figure()
-    fig.add_trace(go.Scatter(x=[r["payload"] for r in s],
+    fig.add_trace(go.Scatter(x=payloads,
                              y=[r["ratio"] for r in s],
                              mode="lines+markers",
                              name="key bytes / plaintext byte"))
@@ -289,6 +288,11 @@ def key_consumption_plot(result: dict) -> Path:
                       xaxis_title="record payload (bytes, log)",
                       xaxis_type="log",
                       yaxis_title="key bytes consumed / plaintext byte")
+    # Label the x-axis at exactly the measured payload sizes, not Plotly's
+    # default 2/5 minor ticks on a log axis (which are confusing here).
+    fig.update_xaxes(tickmode="array",
+                     tickvals=payloads,
+                     ticktext=[_fmt(p) for p in payloads])
     return _save(fig, "05_key_consumption_ratio")
 
 
@@ -338,8 +342,7 @@ def qber_sweep_plot(result: dict) -> Path:
     fig.add_vline(x=11, line_dash="dash", line_color="#d62728",
                   annotation_text="Shor-Preskill abort (11%)")
     fig.update_layout(template=_TEMPLATE,
-                      title="Secret-key rate vs QBER (asymptotic, "
-                            f"raw rate {(1 << 20) / 1e6:.1f} Mbps)",
+                      title=None,
                       xaxis_title="QBER (%)",
                       yaxis_title="secret-key rate (KiB / s)",
                       legend=dict(orientation="h"))
