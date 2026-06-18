@@ -71,31 +71,30 @@ def build(bus: EventBus, height: int = 240) -> go.Figure:
     # Lines run node-to-node (x positions); they sit above/below the discs in
     # y, so they meet the vertical node connectors without crossing the discs.
     fig.add_shape(type="line", x0=_AX, x1=_BX, y0=_QY, y1=_QY,
-                  line=dict(color="#2a3f5f", width=3))
+                  line=dict(color="#1a1a1a", width=2))
     fig.add_annotation(x=(_AX + _BX) / 2, y=_QY + 0.14, showarrow=False,
                        text="Quantum channel (one-way)",
-                       font=dict(color="#7fb3ff", size=17))
+                       font=dict(color="#1f77b4", size=17))
     # Direction arrowhead near Bob.
     fig.add_annotation(x=rx, y=_QY, ax=rx - 0.08, ay=_QY,
                        xref="x", yref="y", axref="x", ayref="y",
                        showarrow=True, arrowhead=2, arrowsize=1.4,
-                       arrowwidth=2, arrowcolor="#7fb3ff", text="")
+                       arrowwidth=2, arrowcolor="#1f77b4", text="")
 
     px, py = _photon_positions(active, eve)
     if px:
         fig.add_trace(go.Scatter(
             x=px, y=py, mode="markers",
-            marker=dict(size=15, color="#00d2ff", symbol="circle",
-                        line=dict(width=1, color="#bff")),
+            marker=dict(size=12, color="#1f77b4", symbol="circle"),
             hoverinfo="skip", showlegend=False,
         ))
 
     # --- Public classical channel (bottom, two-way reconciliation) ---
     fig.add_shape(type="line", x0=_AX, x1=_BX, y0=_CY, y1=_CY,
-                  line=dict(color="#444", width=2, dash="dot"))
+                  line=dict(color="#888", width=2, dash="dot"))
     fig.add_annotation(x=(_AX + _BX) / 2, y=_CY - 0.14, showarrow=False,
                        text="Public channel (two-way, reconciliation)",
-                       font=dict(color="#bbb", size=17))
+                       font=dict(color="#444", size=17))
     for x0, x1 in ((lx, lx + 0.10), (rx, rx - 0.10)):
         fig.add_annotation(x=x1, y=_CY, ax=x0, ay=_CY,
                            xref="x", yref="y", axref="x", ayref="y",
@@ -107,16 +106,16 @@ def build(bus: EventBus, height: int = 240) -> go.Figure:
         tap = (lx + rx) / 2.0
         fig.add_trace(go.Scatter(
             x=[tap], y=[_QY], mode="markers+text",
-            marker=dict(size=24, color="rgba(214,39,40,0.9)",
-                        symbol="x-thin", line=dict(width=3, color="#d62728")),
+            marker=dict(size=24, color="rgba(178,34,34,0.9)",
+                        symbol="x-thin", line=dict(width=3, color="#b22222")),
             text=["Eve"], textposition="top center",
-            textfont=dict(color="#d62728", size=13),
+            textfont=dict(color="#b22222", size=13),
             hoverinfo="skip", showlegend=False,
         ))
         fig.add_annotation(
             x=tap, y=_QY - 0.10, showarrow=False,
             text=f"intercept-resend disturbs photons → QBER {qber:.1%}",
-            font=dict(color="#d62728", size=11))
+            font=dict(color="#b22222", size=11))
 
     # --- Alice / Bob endpoints (span both channels) ---
     cy_mid = (_QY + _CY) / 2          # disc centre
@@ -129,28 +128,33 @@ def build(bus: EventBus, height: int = 240) -> go.Figure:
                       line=dict(color="#555", width=2))
         fig.add_trace(go.Scatter(
             x=[x], y=[cy_mid], mode="markers+text",
-            marker=dict(size=64, color="#1f3b66",
-                        line=dict(width=2, color="#7fb3ff")),
+            marker=dict(size=64, color="#e8f0fa",
+                        line=dict(width=2, color="#1f77b4")),
             text=[f"{name}<br>{pool} keys"],
             textposition="middle center",
-            textfont=dict(color="white", size=12),
+            textfont=dict(color="#1a1a1a", size=12),
             hoverinfo="skip", showlegend=False,
         ))
 
     # --- Centre statement: the key is derived, not transmitted ---
+    # A dotted line spanning Alice -> Bob marks that the same derived key is
+    # present at *both* ends (it is not a channel; nothing travels along it).
+    cy_mid = (_QY + _CY) / 2
+    fig.add_shape(type="line", x0=lx, x1=rx, y0=cy_mid, y1=cy_mid,
+                  line=dict(color="#bbb", width=1.5, dash="dot"))
     derived = "key derived at both ends" if active else "idle (no photons)"
     fig.add_annotation(
-        x=(_AX + _BX) / 2, y=(_QY + _CY) / 2, showarrow=False,
-        text=f"\U0001f511 {derived}",
-        font=dict(color="#2ca02c" if active else "#777", size=12),
-        bgcolor="rgba(14,17,23,0.85)")
+        x=(_AX + _BX) / 2, y=cy_mid, showarrow=False,
+        text=derived,
+        font=dict(color="#2e7d32" if active else "#999", size=12),
+        bgcolor="rgba(255,255,255,0.9)")
 
     fig.update_layout(
         xaxis=dict(visible=False, range=[0, 1]),
         yaxis=dict(visible=False, range=[0.05, 0.95]),
         margin=dict(l=10, r=10, t=10, b=10),
         height=height,
-        plot_bgcolor="#0e1117",
-        paper_bgcolor="#0e1117",
+        plot_bgcolor="white",
+        paper_bgcolor="white",
     )
     return fig

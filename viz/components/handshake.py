@@ -59,10 +59,10 @@ def build(bus: EventBus, height: int = 260) -> go.Figure:
     fig = go.Figure()
 
     # --- Four lifelines: KME-A | Client | Server | KME-B ---
-    for x, name, col in ((_AX, "KME-A", "#7fb3ff"),
-                         (_CX, "Client (SAE)", "#ddd"),
-                         (_SX, "Server (SAE)", "#ddd"),
-                         (_BX, "KME-B", "#7fb3ff")):
+    for x, name, col in ((_AX, "KME-A", "#1f77b4"),
+                         (_CX, "Client (SAE)", "#1a1a1a"),
+                         (_SX, "Server (SAE)", "#1a1a1a"),
+                         (_BX, "KME-B", "#1f77b4")):
         fig.add_shape(type="line", x0=x, x1=x, y0=0, y1=0.95,
                       line=dict(color="#888", width=2))
         fig.add_annotation(x=x, y=1.0, text=name, showarrow=False,
@@ -73,17 +73,17 @@ def build(bus: EventBus, height: int = 260) -> go.Figure:
     if last_ms is not None:
         readout += f"   last: {last_ms:.1f} ms"
     fig.add_annotation(x=0.5, y=1.10, text=readout, showarrow=False,
-                       font=dict(color="#7fd97f", size=16))
+                       font=dict(color="#1a1a1a", size=16))
 
     # --- The choreographed message flow ---
     for idx, (label, src, dst) in enumerate(_FLOW):
         y = 0.88 - (idx + 1) * (0.82 / (n + 1))
         if idx == cur:
-            colour, width, lblsize = "#39ff7a", 4, 15   # happening now
+            colour, width, lblsize = "#1f77b4", 4, 15    # happening now
         elif idx < cur:
-            colour, width, lblsize = "#2ca02c", 2, 13    # already passed
+            colour, width, lblsize = "#2e7d32", 2, 13     # already passed
         else:
-            colour, width, lblsize = "#445", 2, 13       # upcoming
+            colour, width, lblsize = "#ccc", 2, 13        # upcoming
         fig.add_annotation(x=dst, y=y, ax=src, ay=y,
                            xref="x", yref="y", axref="x", ayref="y",
                            showarrow=True, arrowhead=3, arrowsize=1.3,
@@ -95,7 +95,7 @@ def build(bus: EventBus, height: int = 260) -> go.Figure:
         xaxis=dict(visible=False, range=[0, 1]),
         yaxis=dict(visible=False, range=[0, 1.15]),
         height=height, margin=dict(l=10, r=10, t=30, b=10),
-        plot_bgcolor="#0e1117", paper_bgcolor="#0e1117",
+        plot_bgcolor="white", paper_bgcolor="white",
         showlegend=False,
     )
     return fig

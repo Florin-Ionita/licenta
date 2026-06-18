@@ -52,15 +52,23 @@ def build_timeseries(bus: EventBus, height: int = 300) -> go.Figure:
                   secondary_y=False)
     fig.add_trace(go.Scatter(x=rate_times, y=rate_values, mode="lines",
                              name="key throughput (B/s, 5s avg)",
-                             line=dict(color="#2ca02c", dash="dot")),
+                             line=dict(color="#2e7d32", dash="dot")),
                   secondary_y=True)
-    fig.update_xaxes(title_text="seconds since start", color="#bbb")
-    fig.update_yaxes(title_text="fresh keys in pool", secondary_y=False, color="#bbb")
-    fig.update_yaxes(title_text="bytes / sec", secondary_y=True, color="#bbb")
+    fig.update_xaxes(title_text="seconds since start", color="#1a1a1a",
+                     showline=True, linecolor="#888", linewidth=1,
+                     gridcolor="#e6e6e6", zeroline=False)
+    fig.update_yaxes(title_text="fresh keys in pool", secondary_y=False,
+                     color="#1a1a1a", showline=True, linecolor="#888", linewidth=1,
+                     gridcolor="#e6e6e6", zeroline=False)
+    fig.update_yaxes(title_text="bytes / sec", secondary_y=True, color="#1a1a1a",
+                     showline=True, linecolor="#888", linewidth=1,
+                     showgrid=False, zeroline=False)
     fig.update_layout(
+        template="plotly_white",
         height=height, margin=dict(l=10, r=10, t=10, b=40),
-        plot_bgcolor="#0e1117", paper_bgcolor="#0e1117",
-        legend=dict(orientation="h", y=1.0, x=0.0, font=dict(color="#bbb")),
+        plot_bgcolor="white", paper_bgcolor="white",
+        font=dict(color="#1a1a1a"),
+        legend=dict(orientation="h", y=1.0, x=0.0, font=dict(color="#1a1a1a")),
     )
     return fig
 
@@ -70,7 +78,7 @@ def stat_strip(bus: EventBus) -> list[tuple[str, str]]:
     c = bus.counters()
     return [
         ("Last handshake", f"{c.get('last_handshake_ms', 0):.1f} ms"),
-        ("Handshakes ✓",   f"{int(c.get('handshakes_completed', 0))}"),
+        ("Handshakes done", f"{int(c.get('handshakes_completed', 0))}"),
         ("Records sent",   f"{int(c.get('records_sent', 0))}"),
         ("Key bytes produced", f"{int(c.get('key_bytes_produced', 0)):,}"),
         ("Key bytes consumed", f"{int(c.get('key_bytes_consumed', 0)):,}"),

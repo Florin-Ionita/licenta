@@ -32,7 +32,7 @@ from viz.runtime import Runtime
 
 
 st.set_page_config(page_title="QTLS over QKD -- live demo",
-                   layout="wide", page_icon="🔐")
+                   layout="wide")
 
 
 def _ensure_state() -> None:
@@ -66,20 +66,20 @@ def _sidebar() -> None:
     with st.sidebar:
         st.markdown("### Control")
         if st.session_state.running:
-            if st.button("⏹ Stop", width="stretch"):
+            if st.button("Stop", width="stretch"):
                 _stop_runtime()
                 st.rerun()
         else:
-            if st.button("▶ Start", width="stretch"):
+            if st.button("Start", width="stretch"):
                 _start_runtime()
                 st.rerun()
-        new_eve = st.toggle("☣ Eve attack", value=st.session_state.eve,
+        new_eve = st.toggle("Eve attack", value=st.session_state.eve,
                             disabled=not st.session_state.running)
         if new_eve != st.session_state.eve:
             st.session_state.eve = new_eve
             if st.session_state.runtime is not None:
                 st.session_state.runtime.set_eve(new_eve)
-        status = "● running" if st.session_state.running else "○ stopped"
+        status = "running" if st.session_state.running else "stopped"
         st.markdown(f"**Status:** {status}")
 
         st.markdown("---")
@@ -90,7 +90,7 @@ def _sidebar() -> None:
             help="How often the dashboard re-reads bus state. Higher = calmer.",
         )
         st.session_state.paused = st.toggle(
-            "⏸ Pause snapshot", value=st.session_state.paused,
+            "Pause snapshot", value=st.session_state.paused,
             help="Freeze the panels on the current frame -- useful during a defence "
                  "to point at a specific BB84 round. Background producers keep running.",
         )
@@ -117,7 +117,7 @@ def _stop_runtime() -> None:
 
 
 def _header() -> None:
-    st.markdown("### 🔐 QTLS over a simulated QKD network")
+    st.markdown("### QTLS over a simulated QKD network")
 
 
 _PANEL_H = 650  # px per panel: each panel fills roughly one screen height
@@ -154,7 +154,7 @@ def _render_panels() -> None:
         log_events = bus.snapshot("log", limit=50)
         for ev in reversed(log_events):
             level = ev.data.get("level", "info")
-            tag = {"info": "🟦", "warn": "🟧", "error": "🟥"}.get(level, "▫")
+            tag = {"info": "[info]", "warn": "[warn]", "error": "[error]"}.get(level, "[info]")
             st.text(f"{tag} {ev.data.get('msg', '')}")
 
 
